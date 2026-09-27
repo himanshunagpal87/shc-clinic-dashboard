@@ -2051,7 +2051,8 @@ VIEWS.staff = async function(content) {
    IMPORT / EXPORT / BACKUP (admin only)
    ====================================================================== */
 const BACKUP_TABLES = ["patients","doctors","services","appointments","medical_history","treatment_protocols",
-  "treatment_session_notes","invoices","payments","feedback","reports","escalations","call_logs","error_log","staff"];
+  "treatment_session_notes","invoices","payments","feedback","reports","escalations","call_logs","error_log","staff",
+  "articles","clinic_closures","calendar_busy_blocks","website_booking_requests"];
 
 VIEWS.data = async function(content) {
   content.innerHTML = `
