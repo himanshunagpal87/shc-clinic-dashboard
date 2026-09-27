@@ -270,6 +270,7 @@ const NAV_ITEMS = [
   { key: "billing", label: "Billing & Payments", icon: "💳", roles: ["admin","doctor","reception","billing"] },
   { key: "feedback", label: "Feedback & Escalations", icon: "⚠️", roles: ["admin","doctor"] },
   { key: "reports", label: "Reports", icon: "📄", roles: ["admin","doctor"] },
+  { key: "closures", label: "Closures & Holidays", icon: "🗓️", roles: ["admin","doctor","reception"] },
   { key: "articles", label: "Website Articles", icon: "📝", roles: ["admin","doctor","marketing"] },
   { key: "staff", label: "Staff & Users", icon: "🔑", roles: ["admin"] },
   { key: "data", label: "Import / Export / Backup", icon: "🗂️", roles: ["admin"] },
@@ -564,6 +565,7 @@ const PAGE_META = {
   billing: ["Billing & Payments", "Invoices and payments"],
   feedback: ["Feedback & Escalations", "Ratings and follow-ups"],
   reports: ["Reports", "Patient report links"],
+  closures: ["Closures & Holidays", "Days the clinic or a doctor is closed - blocks bookings and shows a notice on the website"],
   articles: ["Website Articles", "Write, review and schedule articles for shivwikholisticcare.com"],
   staff: ["Staff & Users", "Manage dashboard logins and roles"],
   data: ["Import / Export / Backup", "Bulk data tools"],
@@ -1460,6 +1462,122 @@ VIEWS.reports = async function(content) {
       </tbody></table>
     </div>`;
 };
+
+/* ======================================================================
+   CLOSURES & HOLIDAYS (admin/doctor manage, reception views)
+   A closure blocks confirmed bookings on those days for every path (DB
+   trigger), shows up as busy to the WhatsApp bot, and puts a notice on the
+   website. Existing bookings are NOT cancelled automatically - staff are
+   shown who to contact.
+   ====================================================================== */
+function addDaysISO(dateStr, n) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function fmtClosureRange(c) {
+  const f = s => new Date(s + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  return c.start_date === c.end_date ? f(c.start_date) : `${f(c.start_date)} → ${f(c.end_date)}`;
+}
+async function bookingsDuringClosure(c) {
+  let q = sb.from("appointments")
+    .select("id, slot_time, status, patient:patients(name, phone), doctor:doctors(name)")
+    .gte("slot_time", `${c.start_date}T00:00:00+05:30`)
+    .lt("slot_time", `${addDaysISO(c.end_date, 1)}T00:00:00+05:30`)
+    .in("status", ["confirmed","pending_doctor_approval","pending_confirmation","reschedule_pending"])
+    .order("slot_time");
+  if (c.doctor_id) q = q.eq("doctor_id", c.doctor_id);
+  const { data } = await q;
+  return data || [];
+}
+
+VIEWS.closures = async function(content) {
+  const today = todayIST();
+  const [{ data: closures, error }, { data: doctors }] = await Promise.all([
+    sb.from("clinic_closures").select("*").order("start_date", { ascending: true }),
+    sb.from("doctors").select("id, name").eq("is_active", true).order("name"),
+  ]);
+  if (error) throw error;
+  const docName = id => (doctors || []).find(d => d.id === id)?.name || "Doctor";
+  const upcoming = (closures || []).filter(c => c.end_date >= today);
+  const past = (closures || []).filter(c => c.end_date < today).reverse().slice(0, 10);
+  const canEdit = can("admin", "doctor");
+  const affected = await Promise.all(upcoming.map(bookingsDuringClosure));
+
+  const row = (c, i, isPast) => `<tr>
+    <td>${fmtClosureRange(c)}${!isPast && c.start_date <= today ? ` <span class="badge red">Closed now</span>` : ``}</td>
+    <td>${c.doctor_id ? escapeHtml(docName(c.doctor_id)) : `<strong>Whole clinic</strong>`}</td>
+    <td>${escapeHtml(c.note)}</td>
+    ${isPast ? `` : `<td>${affected[i].length ? `<button class="btn btn-secondary btn-sm" data-affected="${i}">⚠ ${affected[i].length} booked</button>` : `<span class="muted">None</span>`}</td>`}
+    <td>${canEdit ? `<button class="btn btn-danger btn-sm" data-remove="${c.id}">Remove</button>` : ``}</td>
+  </tr>`;
+
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Upcoming closures</div>${canEdit ? `<button class="btn btn-primary btn-sm" id="addClosureBtn">+ Add Closure</button>` : ``}</div>
+      <p class="muted" style="font-size:12.5px;margin-bottom:10px">On these days the WhatsApp assistant and the website won't accept bookings, and the website shows the note as a notice. Bookings made before a closure was added are <strong>not</strong> cancelled &mdash; contact those patients to reschedule.</p>
+      <table><thead><tr><th>Dates</th><th>Applies to</th><th>Note (shown on website)</th><th>Already booked</th><th></th></tr></thead>
+      <tbody>${upcoming.map((c, i) => row(c, i, false)).join("") || `<tr><td colspan="5" class="empty-state">No upcoming closures.</td></tr>`}</tbody></table>
+    </div>
+    ${past.length ? `<div class="panel">
+      <div class="panel-head"><div class="panel-title">Recent past closures</div></div>
+      <table><thead><tr><th>Dates</th><th>Applies to</th><th>Note</th><th></th></tr></thead>
+      <tbody>${past.map((c, i) => row(c, i, true)).join("")}</tbody></table>
+    </div>` : ``}`;
+
+  content.querySelectorAll("[data-affected]").forEach(b => b.addEventListener("click", () => showClosureBookings(upcoming[b.dataset.affected], affected[b.dataset.affected])));
+  content.querySelectorAll("[data-remove]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Remove this closure? Bookings will be accepted on these days again.")) return;
+    const { error } = await sb.from("clinic_closures").delete().eq("id", b.dataset.remove);
+    if (error) return toast(error.message, "error");
+    toast("Closure removed.", "success"); navigate("closures");
+  }));
+  const addBtn = document.getElementById("addClosureBtn");
+  if (addBtn) addBtn.addEventListener("click", () => {
+    openModal("Add Closure", `
+      <form id="closureForm">
+        <div class="form-row mb-8">
+          <div class="field"><label>From *</label><input type="date" name="start_date" required min="${today}"></div>
+          <div class="field"><label>To (last closed day) *</label><input type="date" name="end_date" required min="${today}"></div>
+        </div>
+        <div class="field mb-8"><label>Applies to *</label>
+          <select name="doctor_id"><option value="">Whole clinic (all doctors)</option>${(doctors || []).map(d => `<option value="${d.id}">${escapeHtml(d.name)} only</option>`).join("")}</select></div>
+        <div class="field mb-8"><label>Note shown on the website *</label><input name="note" required maxlength="120" placeholder="e.g. Diwali holiday"></div>
+        <p class="format-help">For a few hours off (not a full day), block the time in Dr. Sonal's Google Calendar instead &mdash; the bot already respects that.</p>
+        <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Add Closure</button></div>
+      </form>`);
+    const form = document.getElementById("closureForm");
+    const startIn = form.querySelector('[name="start_date"]'), endIn = form.querySelector('[name="end_date"]');
+    startIn.addEventListener("change", () => { endIn.min = startIn.value; if (!endIn.value || endIn.value < startIn.value) endIn.value = startIn.value; });
+    document.getElementById("cancelBtn").addEventListener("click", closeModal);
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const payload = {
+        start_date: fd.get("start_date"), end_date: fd.get("end_date") || fd.get("start_date"),
+        doctor_id: fd.get("doctor_id") ? Number(fd.get("doctor_id")) : null,
+        note: fd.get("note").trim(), created_by: state.staff.id,
+      };
+      if (payload.end_date < payload.start_date) return toast("The end date is before the start date.", "error");
+      const { data, error } = await sb.from("clinic_closures").insert(payload).select().single();
+      if (error) return toast(error.message, "error");
+      closeModal();
+      const booked = await bookingsDuringClosure(data);
+      toast("Closure added.", "success");
+      if (booked.length) showClosureBookings(data, booked, true);
+      else navigate("closures");
+    });
+  });
+};
+
+function showClosureBookings(c, booked, justAdded) {
+  openModal(justAdded ? "Closure added — patients to contact" : "Bookings during this closure", `
+    <p style="font-size:13px;margin-bottom:12px">${justAdded ? `<strong>${booked.length}</strong> booking(s) already exist` : `Bookings`} during ${fmtClosureRange(c)}. They were <strong>not</strong> cancelled &mdash; please contact these patients to reschedule.</p>
+    <table><thead><tr><th>When</th><th>Patient</th><th>Doctor</th><th>Status</th></tr></thead>
+    <tbody>${booked.map(a => `<tr><td>${fmtDate(a.slot_time)}</td><td>${escapeHtml(a.patient?.name || '—')}<div class="muted" style="font-size:11px">${escapeHtml(a.patient?.phone || '')}</div></td><td>${escapeHtml(a.doctor?.name || '—')}</td><td>${statusBadge(a.status)}</td></tr>`).join("")}</tbody></table>
+    <div class="modal-actions"><button type="button" class="btn btn-primary" id="okBtn">OK</button></div>`, { wide: true });
+  document.getElementById("okBtn").addEventListener("click", () => { closeModal(); navigate("closures"); });
+}
 
 /* ======================================================================
    WEBSITE ARTICLES (admin, doctor, marketing)
