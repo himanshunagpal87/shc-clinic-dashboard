@@ -78,7 +78,8 @@
   #app { display:none; width:100%; }
   .sidebar {
     width:var(--sidebar-w); background:var(--surface); border-right:1px solid var(--border);
-    display:flex; flex-direction:column; height:100vh; position:fixed; left:0; top:0; z-index:100;
+    display:flex; flex-direction:column; height:100vh; height:100dvh; position:fixed; left:0; top:0; z-index:100;
+    transition:width .18s ease, transform .2s ease;
   }
   .sidebar-logo { padding:22px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
   .sidebar-logo .logo-icon { width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg,var(--accent),var(--purple)); display:flex; align-items:center; justify-content:center; font-size:17px; flex-shrink:0; }
@@ -97,8 +98,25 @@
   .user-role { font-size:10.5px; color:var(--text-muted); text-transform:capitalize; }
   .signout-btn { width:100%; margin-top:10px; }
 
-  .main { margin-left:var(--sidebar-w); flex:1; height:100vh; overflow-y:auto; }
+  .main { margin-left:var(--sidebar-w); flex:1; height:100vh; height:100dvh; overflow-y:auto; transition:margin-left .18s ease; }
   .topbar { position:sticky; top:0; z-index:50; background:rgba(11,15,26,0.92); backdrop-filter:blur(10px); border-bottom:1px solid var(--border); padding:16px 28px; display:flex; align-items:center; gap:16px; }
+  .icon-btn { background:var(--card); border:1px solid var(--border); color:var(--text); border-radius:8px; width:38px; height:38px; display:inline-flex; align-items:center; justify-content:center; font-size:17px; cursor:pointer; flex-shrink:0; }
+  .icon-btn:hover { background:var(--card-hover); }
+  .topbar-signout { display:none; }
+  .sidebar-backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:90; }
+
+  /* Collapsed sidebar (desktop): icon rail */
+  body.nav-collapsed { --sidebar-w: 68px; }
+  body.nav-collapsed .sidebar-logo { justify-content:center; padding:22px 8px; }
+  body.nav-collapsed .sidebar-logo .logo-words,
+  body.nav-collapsed .nav-label,
+  body.nav-collapsed .user-text,
+  body.nav-collapsed .btn-label,
+  body.nav-collapsed .nav-badge { display:none; }
+  body.nav-collapsed .nav-item { justify-content:center; padding:11px 0; }
+  body.nav-collapsed .user-info { justify-content:center; padding:8px 0; }
+  body.nav-collapsed .signout-btn { justify-content:center; padding:9px 0; }
+  body.nav-collapsed .nav-icon { font-size:17px; width:auto; }
   .topbar-title { font-family:'Space Grotesk',sans-serif; font-size:19px; font-weight:600; flex:1; }
   .topbar-sub { font-size:12px; color:var(--text-muted); }
   .content { padding:24px 28px 60px; }
@@ -157,6 +175,38 @@
   .hidden { display:none !important; }
   .stars { color:var(--yellow); letter-spacing:1px; }
   .modal.wide { width:880px; }
+  /* ---------- TABLET / MOBILE ---------- */
+  @media (max-width:900px) {
+    body.nav-collapsed { --sidebar-w: 250px; }           /* rail mode is desktop-only */
+    body.nav-collapsed .nav-label, body.nav-collapsed .user-text, body.nav-collapsed .btn-label,
+    body.nav-collapsed .sidebar-logo .logo-words { display:revert; }
+    body.nav-collapsed .nav-item { justify-content:flex-start; padding:9px 12px; }
+    body.nav-collapsed .sidebar-logo { justify-content:flex-start; padding:22px 20px; }
+    .sidebar { width:min(280px, 84vw); transform:translateX(-100%); box-shadow:0 0 40px rgba(0,0,0,.5); }
+    body.nav-open .sidebar { transform:translateX(0); }
+    body.nav-open .sidebar-backdrop { display:block; }
+    .main { margin-left:0; }
+    .topbar { padding:12px 14px; gap:10px; }
+    .topbar-title { font-size:17px; }
+    .topbar-signout { display:inline-flex; }
+    .content { padding:14px 12px 48px; }
+    .panel { padding:14px; overflow-x:auto; }
+    .panel table { min-width:620px; }
+    .tabs { overflow-x:auto; white-space:nowrap; }
+    .search-box { width:100%; }
+    .modal-backdrop { padding:14px 10px; }
+    .modal { padding:18px; }
+    .article-preview { padding:16px; }
+  }
+  @media (max-width:600px) {
+    .grid-4, .grid-3 { grid-template-columns:repeat(2,1fr); }
+    .grid-2, .form-row { grid-template-columns:1fr; }
+    .stat-card { padding:14px; }
+    .stat-card .stat-value { font-size:22px; }
+    .modal-actions { flex-wrap:wrap; }
+    .modal-actions .btn { flex:1 1 auto; justify-content:center; }
+  }
+
   .article-preview { background:#fff; color:#163331; border-radius:10px; padding:22px 26px; max-height:60vh; overflow-y:auto; font-size:14.5px; line-height:1.65; }
   .article-preview h1 { font-size:22px; margin-bottom:6px; }
   .article-preview h2 { font-size:17px; margin:18px 0 8px; }
@@ -200,10 +250,11 @@
 
 <!-- ===================== APP ===================== -->
 <div id="app">
-  <div class="sidebar">
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+  <div class="sidebar" id="sidebar">
     <div class="sidebar-logo">
       <div class="logo-icon">🏥</div>
-      <div>
+      <div class="logo-words">
         <div class="logo-text">Shivwik Holistic</div>
         <div class="logo-sub">Care Dashboard</div>
       </div>
@@ -212,21 +263,23 @@
     <div class="sidebar-footer">
       <div class="user-info">
         <div class="avatar" id="userAvatar">?</div>
-        <div>
+        <div class="user-text">
           <div class="user-name" id="userName">—</div>
           <div class="user-role" id="userRole">—</div>
         </div>
       </div>
-      <button class="btn btn-secondary signout-btn" id="changePasswordBtn" style="margin-bottom:8px">Change Password</button>
-      <button class="btn btn-secondary signout-btn" id="signOutBtn">Sign Out</button>
+      <button class="btn btn-secondary signout-btn" id="changePasswordBtn" style="margin-bottom:8px" title="Change Password">🔑<span class="btn-label"> Change Password</span></button>
+      <button class="btn btn-secondary signout-btn" id="signOutBtn" title="Sign Out">⏻<span class="btn-label"> Sign Out</span></button>
     </div>
   </div>
   <div class="main">
     <div class="topbar">
-      <div>
+      <button class="icon-btn" id="navToggleBtn" title="Show / hide menu" aria-label="Show or hide menu" aria-controls="sidebar">☰</button>
+      <div style="flex:1;min-width:0">
         <div class="topbar-title" id="pageTitle">Dashboard</div>
         <div class="topbar-sub" id="pageSub"></div>
       </div>
+      <button class="icon-btn topbar-signout" id="topSignOutBtn" title="Sign Out" aria-label="Sign out">⏻</button>
     </div>
     <div class="content" id="content"></div>
   </div>
@@ -409,6 +462,8 @@ async function handleLogin(e) {
     }
     state.session = data.session;
     state.staff = profile;
+    storeSet(SIGNED_IN_AT_KEY, Date.now());
+    markActivity(true);
     enterApp();
   } catch (err) {
     errEl.textContent = err.message || "Sign-in failed.";
@@ -419,13 +474,15 @@ async function handleLogin(e) {
 
 async function handleSignOut(reason) {
   stopIdleTimer();
-  await sb.auth.signOut();
+  closeModal(); closeMobileNav();
   state.session = null; state.staff = null;
+  storeDel(LAST_ACTIVE_KEY); storeDel(SIGNED_IN_AT_KEY);
   document.getElementById("app").style.display = "none";
   document.getElementById("loginScreen").style.display = "flex";
-  if (reason === "idle") {
-    document.getElementById("loginError").textContent = "You were signed out after 15 minutes of inactivity, to protect patient data.";
-  }
+  document.getElementById("loginError").textContent =
+    reason === "idle" ? "You were signed out after 15 minutes of inactivity, to protect patient data." :
+    reason === "max" ? "Your session ended after 12 hours. Please sign in again." : "";
+  await sb.auth.signOut();
 }
 
 function openChangePasswordModal() {
@@ -491,7 +548,9 @@ function startIdleTimer() {
   clearTimeout(idleTimer);
   clearIdleWarning();
   if (!state.session) return;
-  idleTimer = setTimeout(showIdleWarning, IDLE_TIMEOUT_MS - IDLE_WARNING_MS);
+  const last = storeGet(LAST_ACTIVE_KEY) || Date.now();
+  const remaining = IDLE_TIMEOUT_MS - (Date.now() - last);
+  idleTimer = setTimeout(showIdleWarning, Math.max(0, remaining - IDLE_WARNING_MS));
 }
 
 function stopIdleTimer() {
@@ -511,7 +570,7 @@ function showIdleWarning() {
       <div class="modal-actions"><button class="btn btn-primary" id="stayBtn">Stay Signed In</button></div>
     </div>`;
   document.body.appendChild(div);
-  document.getElementById("stayBtn").addEventListener("click", startIdleTimer);
+  document.getElementById("stayBtn").addEventListener("click", () => { markActivity(true); startIdleTimer(); });
   idleCountdownInterval = setInterval(() => {
     secondsLeft--;
     const el = document.getElementById("idleCountdown");
@@ -523,12 +582,77 @@ function showIdleWarning() {
   }, 1000);
 }
 
+/* The in-page timer above can't run while a phone browser is backgrounded or
+   closed, and Supabase keeps the session in storage, so reopening the app
+   would silently sign you back in. We therefore record the last activity and
+   the sign-in time, and check them whenever the app is opened or brought back
+   to the foreground. A session also ends 12 hours after sign-in, whatever
+   the activity (one clinic shift). */
+const MAX_SESSION_MS = 12 * 60 * 60 * 1000;
+const LAST_ACTIVE_KEY = "shc_last_active";
+const SIGNED_IN_AT_KEY = "shc_signed_in_at";
+let lastActivityWrite = 0;
+
+function storeGet(k) { try { return Number(localStorage.getItem(k)) || 0; } catch (e) { return 0; } }
+function storeSet(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) { /* storage blocked */ } }
+function storeDel(k) { try { localStorage.removeItem(k); } catch (e) { /* storage blocked */ } }
+
+function markActivity(force) {
+  const now = Date.now();
+  if (force || now - lastActivityWrite > 15000) { storeSet(LAST_ACTIVE_KEY, now); lastActivityWrite = now; }
+}
+// Missing timestamps count as expired, so a session can never outlive the rules.
+function sessionExpiredReason() {
+  const now = Date.now();
+  const last = storeGet(LAST_ACTIVE_KEY), since = storeGet(SIGNED_IN_AT_KEY);
+  if (!last || now - last > IDLE_TIMEOUT_MS) return "idle";
+  if (!since || now - since > MAX_SESSION_MS) return "max";
+  return null;
+}
+function checkSessionOnResume() {
+  if (!state.session) return;
+  const reason = sessionExpiredReason();
+  if (reason) handleSignOut(reason);
+  else startIdleTimer();
+}
+
 ["mousemove","mousedown","keydown","scroll","touchstart","click"].forEach(evt => {
-  document.addEventListener(evt, () => { if (state.session) startIdleTimer(); }, { passive: true });
+  document.addEventListener(evt, () => { if (state.session) { markActivity(); startIdleTimer(); } }, { passive: true });
 });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkSessionOnResume(); });
+window.addEventListener("pageshow", checkSessionOnResume);
+window.addEventListener("focus", checkSessionOnResume);
+// Signing out in one tab signs out every open tab.
+sb.auth.onAuthStateChange(event => { if (event === "SIGNED_OUT" && state.session) handleSignOut(); });
+
+/* ---------------------------------------------------------------------
+   SIDEBAR: collapsible rail on desktop, slide-out drawer on tablet/phone
+   --------------------------------------------------------------------- */
+const NAV_COLLAPSED_KEY = "shc_nav_collapsed";
+const isSmallScreen = () => window.matchMedia("(max-width:900px)").matches;
+function closeMobileNav() { document.body.classList.remove("nav-open"); }
+function toggleNav() {
+  if (isSmallScreen()) { document.body.classList.toggle("nav-open"); return; }
+  const collapsed = document.body.classList.toggle("nav-collapsed");
+  try { localStorage.setItem(NAV_COLLAPSED_KEY, collapsed ? "1" : "0"); } catch (e) { /* storage blocked */ }
+}
+try { if (localStorage.getItem(NAV_COLLAPSED_KEY) === "1") document.body.classList.add("nav-collapsed"); } catch (e) { /* storage blocked */ }
+document.getElementById("navToggleBtn").addEventListener("click", toggleNav);
+document.getElementById("sidebarBackdrop").addEventListener("click", closeMobileNav);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeMobileNav(); });
 
 async function bootstrapSession() {
   const { data } = await sb.auth.getSession();
+  if (data.session && sessionExpiredReason()) {
+    const reason = sessionExpiredReason();
+    await sb.auth.signOut();
+    storeDel(LAST_ACTIVE_KEY); storeDel(SIGNED_IN_AT_KEY);
+    document.getElementById("loginScreen").style.display = "flex";
+    document.getElementById("loginError").textContent = reason === "max"
+      ? "Your session ended after 12 hours. Please sign in again."
+      : "You were signed out after 15 minutes of inactivity, to protect patient data.";
+    return;
+  }
   if (data.session) {
     try {
       const profile = await loadStaffProfile(data.session.user.id);
@@ -548,11 +672,11 @@ async function bootstrapSession() {
 function renderNav() {
   const nav = document.getElementById("sidebarNav");
   nav.innerHTML = NAV_ITEMS.filter(n => n.roles.includes(state.staff.role)).map(n => `
-    <div class="nav-item ${state.view===n.key?'active':''}" data-nav="${n.key}">
-      <span class="nav-icon">${n.icon}</span> ${n.label}
+    <div class="nav-item ${state.view===n.key?'active':''}" data-nav="${n.key}" title="${n.label}">
+      <span class="nav-icon">${n.icon}</span><span class="nav-label">${n.label}</span>
     </div>`).join("");
   nav.querySelectorAll("[data-nav]").forEach(el => {
-    el.addEventListener("click", () => navigate(el.getAttribute("data-nav")));
+    el.addEventListener("click", () => { closeMobileNav(); navigate(el.getAttribute("data-nav")); });
   });
 }
 
@@ -2031,7 +2155,8 @@ VIEWS.data = async function(content) {
    INIT
    --------------------------------------------------------------------- */
 document.getElementById("loginForm").addEventListener("submit", handleLogin);
-document.getElementById("signOutBtn").addEventListener("click", handleSignOut);
+document.getElementById("signOutBtn").addEventListener("click", () => handleSignOut());
+document.getElementById("topSignOutBtn").addEventListener("click", () => handleSignOut());
 document.getElementById("changePasswordBtn").addEventListener("click", openChangePasswordModal);
 bootstrapSession();
 </script>
