@@ -1572,19 +1572,108 @@ function websiteRatingCell(f) {
 /* ======================================================================
    REPORTS
    ====================================================================== */
+// Report files live in the private "reports" storage bucket. The automation
+// WhatsApps the patient a link to shivwikholisticcare.com/report.html, where
+// they confirm the last 4 digits of their phone to open it.
+const REPORT_MAX_BYTES = 20 * 1024 * 1024;
+function newReportToken() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+function reportLinkCell(r) {
+  if (r.notify_status === "pending") return `<span class="badge yellow">Sending…</span>`;
+  if (r.notify_status === "failed") return `<span class="badge red">Not sent</span>`;
+  const expired = r.expires_at && new Date(r.expires_at) < new Date();
+  return (expired ? `<span class="badge grey">Expired</span>` : `<span class="badge green">Sent</span>`) +
+    `<div class="muted" style="font-size:11px">${fmtDate(r.notified_at || r.created_at)}</div>`;
+}
+function reportOpenedCell(r) {
+  if ((r.failed_attempts || 0) >= 5) return `<span class="badge red">Locked</span><div class="muted" style="font-size:11px">5 wrong digit attempts</div>`;
+  return r.view_count ? `${r.view_count}×<div class="muted" style="font-size:11px">${fmtDate(r.last_viewed_at)}</div>` : `<span class="muted">Not yet</span>`;
+}
+
 VIEWS.reports = async function(content) {
   const { data, error } = await sb.from("reports").select("*, patient:patients(name,phone)").order("created_at",{ascending:false}).limit(200);
+  const canManage = can("admin","doctor");
   content.innerHTML = `
     <div class="panel">
-      <table><thead><tr><th>When</th><th>Patient</th><th>Type</th><th>Critical</th><th>Link</th></tr></thead>
-      <tbody>${error ? `<tr><td colspan="5">Error: ${escapeHtml(error.message)}</td></tr>` :
+      <div class="panel-head"><div class="panel-title">Patient reports</div>${canManage ? `<button class="btn btn-primary btn-sm" id="uploadReportBtn">+ Upload Report</button>` : ``}</div>
+      <p class="muted" style="font-size:12.5px;margin-bottom:10px">Reports are stored privately. Within about 2 minutes of upload the patient gets a WhatsApp link; they confirm the last 4 digits of their phone number to open it. Links work for 7 days &mdash; use <strong>Resend link</strong> if one expires or gets locked.</p>
+      <table><thead><tr><th>Uploaded</th><th>Patient</th><th>Type</th><th>Critical</th><th>WhatsApp link</th><th>Opened</th><th></th></tr></thead>
+      <tbody>${error ? `<tr><td colspan="7">Error: ${escapeHtml(error.message)}</td></tr>` :
         (data||[]).map(r=>`<tr>
-          <td>${fmtDate(r.created_at)}</td><td>${escapeHtml(r.patient?.name||'—')}</td><td>${escapeHtml(r.report_type||'—')}</td>
+          <td>${fmtDate(r.created_at)}</td>
+          <td>${escapeHtml(r.patient?.name||'—')}<div class="muted" style="font-size:11px">${escapeHtml(r.patient?.phone||'')}</div></td>
+          <td>${escapeHtml(r.report_type||'—')}</td>
           <td>${r.is_critical ? '<span class="badge red">Critical</span>' : '<span class="badge grey">Normal</span>'}</td>
-          <td>${r.report_url ? `<a href="${escapeHtml(r.report_url)}" target="_blank" rel="noopener">Open ↗</a>` : '—'}</td>
-        </tr>`).join("") || `<tr><td colspan="5" class="empty-state">No reports yet.</td></tr>`}
+          <td>${reportLinkCell(r)}</td>
+          <td>${reportOpenedCell(r)}</td>
+          <td><div class="flex gap-8" style="flex-wrap:wrap">
+            ${r.storage_path ? `<button class="btn btn-secondary btn-sm" data-view="${escapeHtml(r.storage_path)}">View file</button>`
+              : (r.report_url ? `<a class="btn btn-secondary btn-sm" href="${escapeHtml(r.report_url)}" target="_blank" rel="noopener">Open ↗</a>` : ``)}
+            ${canManage && r.notify_status !== 'pending' ? `<button class="btn btn-secondary btn-sm" data-resend="${r.id}">Resend link</button>` : ``}
+          </div></td>
+        </tr>`).join("") || `<tr><td colspan="7" class="empty-state">No reports yet.</td></tr>`}
       </tbody></table>
     </div>`;
+
+  content.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", async () => {
+    const { data: s, error: e } = await sb.storage.from("reports").createSignedUrl(b.dataset.view, 120);
+    if (e) return toast(e.message, "error");
+    window.open(s.signedUrl, "_blank", "noopener");
+  }));
+  content.querySelectorAll("[data-resend]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Send the patient a fresh link? The old link stops working.")) return;
+    const { error: e } = await sb.from("reports").update({
+      secure_token: newReportToken(), expires_at: new Date(Date.now() + 7 * 864e5).toISOString(),
+      notify_status: "pending", failed_attempts: 0,
+    }).eq("id", b.dataset.resend);
+    if (e) return toast(e.message, "error");
+    toast("A new link will be sent on WhatsApp within about 2 minutes.", "success"); navigate("reports");
+  }));
+
+  const upBtn = document.getElementById("uploadReportBtn");
+  if (upBtn) upBtn.addEventListener("click", async () => {
+    const { data: patients } = await sb.from("patients").select("id, name, phone").order("name").limit(2000);
+    const label = p => `${p.name || 'Patient'} — ${p.phone || ''} (#${p.id})`;
+    openModal("Upload Report", `
+      <form id="reportUploadForm">
+        <div class="field mb-8"><label>Patient *</label>
+          <input name="patient" list="reportPatients" required placeholder="Type a name or phone number">
+          <datalist id="reportPatients">${(patients||[]).map(p => `<option value="${escapeHtml(label(p))}"></option>`).join("")}</datalist></div>
+        <div class="form-row mb-8">
+          <div class="field"><label>Report type *</label><input name="report_type" required maxlength="80" placeholder="e.g. Assessment report, X-ray review"></div>
+          <div class="field"><label style="display:flex;align-items:center;gap:6px;margin-top:22px"><input type="checkbox" name="is_critical" style="width:auto"> Critical (alerts Dr. Sonal &amp; admin by email)</label></div>
+        </div>
+        <div class="field mb-8"><label>File * (PDF, JPG or PNG, max 20 MB)</label><input type="file" name="file" required accept="application/pdf,image/jpeg,image/png"></div>
+        <div class="field mb-8"><label>Doctor's notes (optional &mdash; turned into a short, simple summary in the WhatsApp message)</label><textarea name="doctor_notes" rows="3"></textarea></div>
+        <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary" id="uploadSubmitBtn">Upload &amp; Send</button></div>
+      </form>`);
+    document.getElementById("cancelBtn").addEventListener("click", closeModal);
+    document.getElementById("reportUploadForm").addEventListener("submit", async e => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const patient = (patients||[]).find(p => label(p) === fd.get("patient"));
+      if (!patient) return toast("Choose the patient from the list.", "error");
+      if (!patient.phone) return toast("This patient has no phone number, so the link can't be sent.", "error");
+      const file = fd.get("file");
+      if (!file || !file.size) return toast("Choose a file.", "error");
+      if (file.size > REPORT_MAX_BYTES) return toast("The file is larger than 20 MB.", "error");
+      if (!["application/pdf","image/jpeg","image/png"].includes(file.type)) return toast("Only PDF, JPG or PNG files.", "error");
+      const btn = document.getElementById("uploadSubmitBtn");
+      btn.disabled = true; btn.textContent = "Uploading…";
+      const safeName = file.name.toLowerCase().replace(/[^a-z0-9.]+/g, "-").slice(-60);
+      const path = `${patient.id}/${Date.now()}-${safeName}`;
+      const up = await sb.storage.from("reports").upload(path, file, { contentType: file.type, upsert: false });
+      if (up.error) { btn.disabled = false; btn.textContent = "Upload & Send"; return toast(up.error.message, "error"); }
+      const { error: insErr } = await sb.from("reports").insert({
+        patient_id: patient.id, report_type: fd.get("report_type").trim(), is_critical: !!fd.get("is_critical"),
+        doctor_notes: (fd.get("doctor_notes") || "").trim() || null, storage_path: path,
+        notify_status: "pending", uploaded_by: state.staff.id,
+      });
+      if (insErr) { btn.disabled = false; btn.textContent = "Upload & Send"; return toast(insErr.message, "error"); }
+      closeModal(); toast("Uploaded. The patient will get the WhatsApp link within about 2 minutes.", "success"); navigate("reports");
+    });
+  });
 };
 
 /* ======================================================================
