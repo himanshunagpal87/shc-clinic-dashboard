@@ -156,6 +156,13 @@
   .empty-state { text-align:center; padding:40px 20px; color:var(--text-muted); font-size:13px; }
   .hidden { display:none !important; }
   .stars { color:var(--yellow); letter-spacing:1px; }
+  .modal.wide { width:880px; }
+  .article-preview { background:#fff; color:#163331; border-radius:10px; padding:22px 26px; max-height:60vh; overflow-y:auto; font-size:14.5px; line-height:1.65; }
+  .article-preview h1 { font-size:22px; margin-bottom:6px; }
+  .article-preview h2 { font-size:17px; margin:18px 0 8px; }
+  .article-preview p, .article-preview ul { margin-bottom:10px; }
+  .article-preview ul { padding-left:20px; }
+  .format-help { font-size:11.5px; color:var(--text-muted); margin-top:4px; }
   .flex { display:flex; align-items:center; }
   .gap-8 { gap:8px; } .gap-12 { gap:12px; }
   .mb-8 { margin-bottom:8px; } .mb-16 { margin-bottom:16px; }
@@ -251,7 +258,8 @@ const state = {
   viewParams: {},
 };
 
-const ROLE_LABELS = { admin: "Admin", doctor: "Doctor", reception: "Reception", billing: "Billing" };
+const ROLE_LABELS = { admin: "Admin", doctor: "Doctor", reception: "Reception", billing: "Billing", marketing: "Marketing" };
+const STAFF_ROLES = ["admin","doctor","reception","billing","marketing"];
 
 const NAV_ITEMS = [
   { key: "home", label: "Dashboard", icon: "📊", roles: ["admin","doctor","reception","billing"] },
@@ -262,6 +270,7 @@ const NAV_ITEMS = [
   { key: "billing", label: "Billing & Payments", icon: "💳", roles: ["admin","doctor","reception","billing"] },
   { key: "feedback", label: "Feedback & Escalations", icon: "⚠️", roles: ["admin","doctor"] },
   { key: "reports", label: "Reports", icon: "📄", roles: ["admin","doctor"] },
+  { key: "articles", label: "Website Articles", icon: "📝", roles: ["admin","doctor","marketing"] },
   { key: "staff", label: "Staff & Users", icon: "🔑", roles: ["admin"] },
   { key: "data", label: "Import / Export / Backup", icon: "🗂️", roles: ["admin"] },
 ];
@@ -357,7 +366,7 @@ function openModal(title, bodyHtml, opts) {
   const root = document.getElementById("modalRoot");
   root.innerHTML = `
     <div class="modal-backdrop" id="modalBackdrop">
-      <div class="modal">
+      <div class="modal${opts.wide ? ' wide' : ''}">
         <h3>${escapeHtml(title)}</h3>
         <div id="modalBody">${bodyHtml}</div>
       </div>
@@ -555,6 +564,7 @@ const PAGE_META = {
   billing: ["Billing & Payments", "Invoices and payments"],
   feedback: ["Feedback & Escalations", "Ratings and follow-ups"],
   reports: ["Reports", "Patient report links"],
+  articles: ["Website Articles", "Write, review and schedule articles for shivwikholisticcare.com"],
   staff: ["Staff & Users", "Manage dashboard logins and roles"],
   data: ["Import / Export / Backup", "Bulk data tools"],
   patientProfile: ["Patient", ""],
@@ -1128,7 +1138,8 @@ async function renderDoctorsTab(body) {
         <td>${(d.available_days||[]).join(", ")||'—'}</td>
         <td>${(d.start_time||'').slice(0,5)}–${(d.end_time||'').slice(0,5)}</td>
         <td>${(d.saturday_start_time||'').slice(0,5)}–${(d.saturday_end_time||'').slice(0,5)}</td>
-        <td><span class="badge ${d.is_active?'green':'red'}">${d.is_active?'Active':'Inactive'}</span></td>
+        <td><span class="badge ${d.is_active?'green':'red'}">${d.is_active?'Active':'Inactive'}</span>
+          ${d.is_active && d.show_on_website!==false ? `<span class="badge grey" title="Listed on shivwikholisticcare.com">🌐 Website</span>` : ``}</td>
         <td class="flex gap-8">
           <button class="btn btn-secondary btn-sm" data-edit="${d.id}">Edit</button>
           <button class="btn btn-secondary btn-sm" data-toggle="${d.id}" data-active="${d.is_active}">${d.is_active?'Deactivate':'Activate'}</button>
@@ -1178,6 +1189,7 @@ function openDoctorForm(doc, onSaved) {
         <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(doc?.email||'')}"></div>
       </div>
       <div class="field mb-8"><label>Bio</label><textarea name="bio" rows="3">${escapeHtml(doc?.bio||'')}</textarea></div>
+      <div class="field mb-8"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" name="show_on_website" ${doc?.show_on_website===false?'':'checked'} style="width:auto"> Show on website (name, qualification, specialty, bio and schedule only &mdash; never phone, email or fee)</label></div>
       <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">${isEdit?'Save Changes':'Add Doctor'}</button></div>
     </form>`);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
@@ -1192,6 +1204,7 @@ function openDoctorForm(doc, onSaved) {
       start_time: fd.get("start_time"), end_time: fd.get("end_time"),
       saturday_start_time: fd.get("saturday_start_time") || null, saturday_end_time: fd.get("saturday_end_time") || null,
       phone: fd.get("phone") || null, email: fd.get("email") || null, bio: fd.get("bio") || null,
+      show_on_website: !!fd.get("show_on_website"),
     };
     const { error } = isEdit
       ? await sb.from("doctors").update(payload).eq("id", doc.id)
@@ -1381,11 +1394,13 @@ VIEWS.feedback = async function(content) {
     </div>
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Recent Feedback Ratings</div></div>
-      <table><thead><tr><th>When</th><th>Patient</th><th>Rating</th></tr></thead>
+      <p class="muted" style="font-size:12px;margin-bottom:10px">4&ndash;5★ ratings given after the website notice appear on the website as initials + month (e.g. "R.S., Oct 2026"). Patients can reply STOP on WhatsApp to be removed; admins can hide any rating here.</p>
+      <table><thead><tr><th>When</th><th>Patient</th><th>Rating</th><th>Website</th></tr></thead>
       <tbody>${(fb||[]).map(f=>`<tr>
         <td>${fmtDate(f.requested_at)}</td><td>${escapeHtml(f.patient?.name||f.patient_phone||'—')}</td>
         <td>${f.rating ? `<span class="stars">${'★'.repeat(f.rating)}${'☆'.repeat(5-f.rating)}</span>` : `<span class="muted">No reply yet</span>`}</td>
-      </tr>`).join("") || `<tr><td colspan="3" class="empty-state">No feedback collected yet.</td></tr>`}</tbody></table>
+        <td>${websiteRatingCell(f)}</td>
+      </tr>`).join("") || `<tr><td colspan="4" class="empty-state">No feedback collected yet.</td></tr>`}</tbody></table>
     </div>
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Resolved Escalations</div></div>
@@ -1395,6 +1410,11 @@ VIEWS.feedback = async function(content) {
         <td>${escapeHtml(e.reason||'—')}</td><td>${escapeHtml(e.resolution_notes||'—')}</td>
       </tr>`).join("") || `<tr><td colspan="4" class="empty-state">None yet.</td></tr>`}</tbody></table>
     </div>`;
+  content.querySelectorAll("[data-web-toggle]").forEach(btn => btn.addEventListener("click", async () => {
+    const { error } = await sb.from("feedback").update({ website_opt_out: btn.dataset.optout !== "true" }).eq("id", btn.dataset.webToggle);
+    if (error) return toast(error.message, "error");
+    toast("Website visibility updated.", "success"); navigate("feedback");
+  }));
   content.querySelectorAll("[data-resolve]").forEach(btn => {
     btn.addEventListener("click", () => {
       openModal("Resolve Escalation", `
@@ -1415,6 +1435,14 @@ VIEWS.feedback = async function(content) {
   });
 };
 
+function websiteRatingCell(f) {
+  if (!f.rating || f.rating < 4) return `<span class="muted">—</span>`;
+  if (!f.consent_notice_shown) return `<span class="badge grey" title="Rated before the website notice was added to the WhatsApp message">Not eligible</span>`;
+  const btn = can("admin")
+    ? ` <button class="btn btn-secondary btn-sm" data-web-toggle="${f.id}" data-optout="${!!f.website_opt_out}">${f.website_opt_out ? 'Show' : 'Hide'}</button>` : ``;
+  return (f.website_opt_out ? `<span class="badge red">Hidden</span>` : `<span class="badge green">Shown</span>`) + btn;
+}
+
 /* ======================================================================
    REPORTS
    ====================================================================== */
@@ -1432,6 +1460,265 @@ VIEWS.reports = async function(content) {
       </tbody></table>
     </div>`;
 };
+
+/* ======================================================================
+   WEBSITE ARTICLES (admin, doctor, marketing)
+   Doctor/marketing write and submit; only an admin can approve (enforced in
+   the database, not just here). Approved articles go live on the next free
+   Tue/Fri 10:00 AM IST slot, or a date the admin picks.
+   ====================================================================== */
+const ARTICLE_TYPES = { article: "Article", news: "News", workshop: "Workshop", event: "Event" };
+const WEBSITE_URL = "https://www.shivwikholisticcare.com";
+
+function articleState(a) {
+  if (a.status === "approved") return a.publish_at && new Date(a.publish_at) <= new Date() ? "live" : "scheduled";
+  return a.status;
+}
+function articleStatusBadge(a) {
+  const map = {
+    live: ["green","Live"], scheduled: ["purple","Scheduled"], pending_review: ["yellow","Awaiting approval"],
+    draft: ["grey","Draft"], rejected: ["red","Changes requested"], archived: ["grey","Unpublished"],
+  };
+  const [c, l] = map[articleState(a)] || ["grey", a.status];
+  return `<span class="badge ${c}">${l}</span>`;
+}
+function slugify(t) {
+  const s = String(t || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 70).replace(/-+$/, "");
+  return s || ("article-" + Date.now().toString(36));
+}
+function toLocalInput(d) {
+  if (!d) return "";
+  const dt = new Date(d);
+  return new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+// Same minimal format as the website renderer: "## Heading", "- bullet",
+// **bold**, blank line = new paragraph. No raw HTML or links, by design.
+function renderArticleBody(md) {
+  const inline = s => escapeHtml(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  const out = []; let para = [], list = [];
+  const flushPara = () => { if (para.length) { out.push("<p>" + para.map(inline).join("<br>") + "</p>"); para = []; } };
+  const flushList = () => { if (list.length) { out.push("<ul>" + list.map(l => "<li>" + inline(l) + "</li>").join("") + "</ul>"); list = []; } };
+  for (const raw of String(md || "").replace(/\r/g, "").split("\n")) {
+    const line = raw.trim();
+    let m;
+    if (!line) { flushPara(); flushList(); continue; }
+    if ((m = line.match(/^#{1,3}\s+(.*)$/))) { flushPara(); flushList(); out.push("<h2>" + inline(m[1]) + "</h2>"); continue; }
+    if ((m = line.match(/^[-*•]\s+(.*)$/))) { flushPara(); list.push(m[1]); continue; }
+    flushList(); para.push(line);
+  }
+  flushPara(); flushList();
+  return out.join("");
+}
+
+VIEWS.articles = async function(content) {
+  const filter = state.viewParams.filter || (can("admin") ? "pending_review" : "draft");
+  const [{ data, error }, slotRes] = await Promise.all([
+    sb.from("articles").select("*").order("updated_at", { ascending: false }).limit(300),
+    sb.rpc("next_article_slot"),
+  ]);
+  if (error) throw error;
+  const all = data || [];
+  const nextSlot = slotRes.data;
+  const counts = {};
+  all.forEach(a => { const s = articleState(a); counts[s] = (counts[s] || 0) + 1; });
+  const TABS = [["pending_review","Awaiting approval"],["scheduled","Scheduled"],["live","Live"],["draft","Drafts"],
+    ["rejected","Changes requested"],["archived","Unpublished"],["all","All"]];
+  const rows = filter === "all" ? all : all.filter(a => articleState(a) === filter);
+  const scheduled = counts.scheduled || 0;
+
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Publishing schedule</div><button class="btn btn-primary btn-sm" id="newArticleBtn">+ New Article</button></div>
+      <p style="font-size:13px">Approved articles go live automatically on the next free <strong>Tuesday or Friday at 10:00 AM</strong>.
+        Next free slot: <strong>${nextSlot ? fmtDate(nextSlot) : '—'}</strong>.</p>
+      ${scheduled < 2 ? `<p style="font-size:13px;color:var(--yellow);margin-top:6px">⚠ Only ${scheduled} article${scheduled===1?'':'s'} scheduled &mdash; two per week keeps the Tue/Fri calendar full.${(counts.pending_review||0) ? ` ${counts.pending_review} waiting for approval.` : ''}</p>` : ``}
+      ${can("admin") ? `` : `<p class="muted" style="font-size:12px;margin-top:6px">Only an admin can approve and publish. Use <strong>Submit for approval</strong> when an article is ready.</p>`}
+    </div>
+    <div class="tabs">
+      ${TABS.map(([k,l]) => `<div class="tab ${filter===k?'active':''}" data-filter="${k}">${l}${k!=='all' && counts[k] ? ` (${counts[k]})` : ''}</div>`).join("")}
+    </div>
+    <div class="panel">
+      <table><thead><tr><th>Title</th><th>Author</th><th>Status</th><th>Goes live</th><th>Updated</th><th></th></tr></thead>
+      <tbody>${rows.map(a => `<tr>
+        <td><strong>${escapeHtml(a.title)}</strong>
+          <div style="margin-top:3px"><span class="badge grey">${ARTICLE_TYPES[a.type]||a.type}</span>
+          ${a.source==='ai' ? ` <span class="badge purple" title="Drafted by the automation - check every statement">AI draft</span>` : ``}</div>
+          ${a.status==='rejected' && a.review_note ? `<div class="muted" style="font-size:11.5px;margin-top:4px">Admin note: ${escapeHtml(a.review_note)}</div>` : ``}</td>
+        <td>${escapeHtml(a.author_name || (a.source==='ai' ? 'Automation' : '—'))}</td>
+        <td>${articleStatusBadge(a)}</td>
+        <td>${a.status==='approved' ? fmtDate(a.publish_at) : '—'}</td>
+        <td>${fmtDate(a.updated_at)}</td>
+        <td><div class="flex gap-8" style="flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" data-preview="${a.id}">Preview</button>
+          ${can("admin") || ['draft','pending_review','rejected'].includes(a.status) ? `<button class="btn btn-secondary btn-sm" data-edit="${a.id}">Edit</button>` : ``}
+          ${can("admin") && a.status!=='approved' ? `<button class="btn btn-primary btn-sm" data-approve="${a.id}">Approve</button>` : ``}
+          ${can("admin") && a.status==='pending_review' ? `<button class="btn btn-secondary btn-sm" data-reject="${a.id}">Request changes</button>` : ``}
+          ${can("admin") && a.status==='approved' ? `<button class="btn btn-secondary btn-sm" data-unpublish="${a.id}">Unpublish</button>` : ``}
+          ${articleState(a)==='live' ? `<a class="btn btn-secondary btn-sm" href="${WEBSITE_URL}/article.html?slug=${encodeURIComponent(a.slug)}" target="_blank" rel="noopener">View ↗</a>` : ``}
+          ${can("admin") ? `<button class="btn btn-danger btn-sm" data-delete="${a.id}">Delete</button>` : ``}
+        </div></td>
+      </tr>`).join("") || `<tr><td colspan="6" class="empty-state">Nothing here.</td></tr>`}</tbody></table>
+    </div>`;
+
+  const byId = id => all.find(a => String(a.id) === String(id));
+  const reload = () => navigate("articles", { filter });
+  content.querySelectorAll("[data-filter]").forEach(t => t.addEventListener("click", () => navigate("articles", { filter: t.dataset.filter })));
+  document.getElementById("newArticleBtn").addEventListener("click", () => openArticleEditor(null, nextSlot));
+  content.querySelectorAll("[data-preview]").forEach(b => b.addEventListener("click", () => openArticlePreview(byId(b.dataset.preview))));
+  content.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () => openArticleEditor(byId(b.dataset.edit), nextSlot)));
+  content.querySelectorAll("[data-approve]").forEach(b => b.addEventListener("click", () => openApproveArticle(byId(b.dataset.approve), nextSlot, reload)));
+  content.querySelectorAll("[data-reject]").forEach(b => b.addEventListener("click", () => {
+    const a = byId(b.dataset.reject);
+    openModal("Request Changes", `
+      <form id="rejectForm">
+        <p class="muted" style="font-size:12.5px;margin-bottom:10px">"${escapeHtml(a.title)}" goes back to the author with your note.</p>
+        <div class="field mb-8"><label>What needs to change? *</label><textarea name="note" rows="4" required></textarea></div>
+        <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Send Back</button></div>
+      </form>`);
+    document.getElementById("cancelBtn").addEventListener("click", closeModal);
+    document.getElementById("rejectForm").addEventListener("submit", async e => {
+      e.preventDefault();
+      const { error } = await sb.from("articles").update({
+        status: "rejected", review_note: new FormData(e.target).get("note"),
+        reviewed_by: state.staff.id, reviewed_at: new Date().toISOString(), publish_at: null,
+      }).eq("id", a.id);
+      if (error) return toast(error.message, "error");
+      closeModal(); toast("Sent back to the author.", "success"); reload();
+    });
+  }));
+  content.querySelectorAll("[data-unpublish]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Take this article off the website? You can approve it again later.")) return;
+    const { error } = await sb.from("articles").update({ status: "archived" }).eq("id", b.dataset.unpublish);
+    if (error) return toast(error.message, "error");
+    toast("Unpublished.", "success"); reload();
+  }));
+  content.querySelectorAll("[data-delete]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Permanently delete this article? This cannot be undone.")) return;
+    const { error } = await sb.from("articles").delete().eq("id", b.dataset.delete);
+    if (error) return toast(error.message, "error");
+    toast("Deleted.", "success"); reload();
+  }));
+};
+
+function openArticlePreview(a) {
+  openModal("Preview", `
+    <div class="article-preview">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#3f8f6f">${ARTICLE_TYPES[a.type]||''}</div>
+      <h1>${escapeHtml(a.title)}</h1>
+      ${a.summary ? `<p style="color:#4b6563">${escapeHtml(a.summary)}</p>` : ``}
+      ${renderArticleBody(a.body)}
+      <p style="font-size:12.5px;color:#4b6563;border-top:1px solid #dfe9e7;padding-top:10px;margin-top:16px">This article is for general information only and is not a substitute for a professional medical assessment.</p>
+    </div>
+    <div class="modal-actions"><button type="button" class="btn btn-secondary" id="closePreviewBtn">Close</button></div>`, { wide: true });
+  document.getElementById("closePreviewBtn").addEventListener("click", closeModal);
+}
+
+function openArticleEditor(a, nextSlot) {
+  const isEdit = !!a;
+  const isAdmin = can("admin");
+  const isApproved = a?.status === "approved";
+  openModal(isEdit ? "Edit Article" : "New Article", `
+    <form id="articleForm">
+      ${a?.source==='ai' ? `<p style="font-size:12.5px;color:var(--yellow);margin-bottom:10px">⚠ AI-generated draft. Check every health statement, and remove anything that isn't accurate or that Dr. Sonal wouldn't say, before submitting or approving.</p>` : ``}
+      ${a?.status==='rejected' && a.review_note ? `<p style="font-size:12.5px;color:var(--red);margin-bottom:10px">Admin note: ${escapeHtml(a.review_note)}</p>` : ``}
+      <div class="field mb-8"><label>Title *</label><input name="title" required maxlength="140" value="${escapeHtml(a?.title||'')}"></div>
+      <div class="form-row mb-8">
+        <div class="field"><label>Type *</label><select name="type">${Object.entries(ARTICLE_TYPES).map(([k,l]) => `<option value="${k}" ${(a?.type||'article')===k?'selected':''}>${l}</option>`).join("")}</select></div>
+        <div class="field"><label>Web address</label><input name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*" title="lowercase letters, numbers and dashes" value="${escapeHtml(a?.slug||'')}" ${isApproved?'readonly':''}></div>
+      </div>
+      <div class="field mb-8" id="eventDateField"><label>Workshop / event date &amp; time</label><input name="event_date" type="datetime-local" value="${toLocalInput(a?.event_date)}"></div>
+      <div class="field mb-8"><label>Short summary (shown on the Articles page) *</label><textarea name="summary" rows="2" required maxlength="240">${escapeHtml(a?.summary||'')}</textarea></div>
+      <div class="field mb-8"><label>Article *</label><textarea name="body" rows="16" required>${escapeHtml(a?.body||'')}</textarea>
+        <div class="format-help">Formatting: blank line = new paragraph &middot; <code>## Heading</code> &middot; <code>- bullet point</code> &middot; <code>**bold**</code>. The general-information disclaimer is added automatically.</div></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+        <button type="button" class="btn btn-secondary" id="previewBtn">Preview</button>
+        ${isApproved
+          ? `<button type="submit" class="btn btn-primary" data-action="keep">Save Changes</button>`
+          : `<button type="submit" class="btn btn-secondary" data-action="draft">Save Draft</button>
+             ${isAdmin ? `<button type="submit" class="btn btn-primary" data-action="approve">Save &amp; Approve</button>`
+                       : `<button type="submit" class="btn btn-primary" data-action="pending_review">Submit for Approval</button>`}`}
+      </div>
+    </form>`, { wide: true, persistent: true });
+
+  const form = document.getElementById("articleForm");
+  const field = n => form.querySelector(`[name="${n}"]`);
+  const slugInput = field("slug");
+  let slugTouched = !!a?.slug;
+  slugInput.addEventListener("input", () => { slugTouched = true; });
+  field("title").addEventListener("input", () => { if (!slugTouched) slugInput.value = slugify(field("title").value); });
+  const syncEventField = () => document.getElementById("eventDateField").classList.toggle("hidden", !["workshop","event"].includes(field("type").value));
+  field("type").addEventListener("change", syncEventField); syncEventField();
+
+  const collect = () => {
+    const fd = new FormData(form);
+    const type = fd.get("type");
+    return {
+      title: fd.get("title").trim(), slug: (fd.get("slug") || slugify(fd.get("title"))).trim(), type,
+      summary: fd.get("summary").trim(), body: fd.get("body"),
+      event_date: ["workshop","event"].includes(type) && fd.get("event_date") ? new Date(fd.get("event_date")).toISOString() : null,
+    };
+  };
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  document.getElementById("previewBtn").addEventListener("click", () => {
+    const draft = collect();
+    const w = window.open("", "_blank");
+    if (!w) return toast("Allow pop-ups to preview.", "error");
+    w.document.write(`<!doctype html><title>Preview</title><body style="font-family:Inter,system-ui,sans-serif;max-width:720px;margin:32px auto;padding:0 16px;line-height:1.65;color:#163331">
+      <h1>${escapeHtml(draft.title)}</h1><p style="color:#4b6563">${escapeHtml(draft.summary)}</p>${renderArticleBody(draft.body)}</body>`);
+    w.document.close();
+  });
+
+  let clickedAction = null;
+  form.querySelectorAll("[data-action]").forEach(b => b.addEventListener("click", () => { clickedAction = b.dataset.action; }));
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    const action = clickedAction || "draft";
+    const payload = collect();
+    if (action === "draft" || action === "pending_review") payload.status = action;
+    if (action === "approve") payload.status = "pending_review";
+    if (!isEdit) payload.author_name = state.staff.name;
+    const res = isEdit
+      ? await sb.from("articles").update(payload).eq("id", a.id).select().single()
+      : await sb.from("articles").insert(payload).select().single();
+    if (res.error) {
+      return toast(res.error.code === "23505" ? "Another article already uses this web address - change it." : res.error.message, "error");
+    }
+    closeModal();
+    if (action === "approve") return openApproveArticle(res.data, nextSlot, () => navigate("articles", { filter: "scheduled" }));
+    toast(action === "pending_review" ? "Submitted for approval." : "Saved.", "success");
+    navigate("articles", { filter: action === "keep" ? "all" : action });
+  });
+}
+
+function openApproveArticle(a, nextSlot, onDone) {
+  openModal("Approve & Schedule", `
+    <form id="approveForm">
+      <p style="font-size:13px;margin-bottom:12px"><strong>${escapeHtml(a.title)}</strong></p>
+      <div class="field mb-8"><label style="display:flex;gap:6px;align-items:center"><input type="radio" name="when" value="auto" checked style="width:auto"> Next free slot: ${nextSlot ? fmtDate(nextSlot) : '—'}</label></div>
+      <div class="field mb-8"><label style="display:flex;gap:6px;align-items:center"><input type="radio" name="when" value="now" style="width:auto"> Publish now</label></div>
+      <div class="field mb-8"><label style="display:flex;gap:6px;align-items:center"><input type="radio" name="when" value="custom" style="width:auto"> Pick a date &amp; time</label>
+        <input type="datetime-local" name="custom"></div>
+      <p class="muted" style="font-size:12px">By approving you confirm the content is accurate and suitable for patients to read.</p>
+      <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Approve</button></div>
+    </form>`);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  document.getElementById("approveForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    let when = null;
+    if (fd.get("when") === "now") when = new Date().toISOString();
+    if (fd.get("when") === "custom") {
+      if (!fd.get("custom")) return toast("Pick a date and time.", "error");
+      when = new Date(fd.get("custom")).toISOString();
+    }
+    const { data, error } = await sb.rpc("approve_article", { p_id: a.id, p_publish_at: when });
+    if (error) return toast(error.message, "error");
+    closeModal(); toast("Approved - goes live " + fmtDate(data.publish_at) + ".", "success");
+    onDone && onDone();
+  });
+}
 
 /* ======================================================================
    STAFF & USERS (admin only — via Edge Function)
@@ -1469,7 +1756,7 @@ VIEWS.staff = async function(content) {
         <td>${escapeHtml(s.email)}</td>
         <td>
           <select data-role="${s.id}" ${s.id===state.staff.id?'disabled':''}>
-            ${["admin","doctor","reception","billing"].map(r=>`<option value="${r}" ${s.role===r?'selected':''}>${ROLE_LABELS[r]}</option>`).join("")}
+            ${STAFF_ROLES.map(r=>`<option value="${r}" ${s.role===r?'selected':''}>${ROLE_LABELS[r]}</option>`).join("")}
           </select>
         </td>
         <td><span class="badge ${s.active?'green':'red'}">${s.active?'Active':'Inactive'}</span></td>
@@ -1501,7 +1788,8 @@ VIEWS.staff = async function(content) {
         <div class="field mb-8"><label>Email *</label><input name="email" type="email" required></div>
         <div class="field mb-8"><label>Temporary Password * (min 8 characters)</label><input name="password" type="text" required minlength="8"></div>
         <div class="field mb-8"><label>Role *</label>
-          <select name="role" required>${["admin","doctor","reception","billing"].map(r=>`<option value="${r}">${ROLE_LABELS[r]}</option>`).join("")}</select>
+          <select name="role" required>${STAFF_ROLES.map(r=>`<option value="${r}">${ROLE_LABELS[r]}</option>`).join("")}</select>
+          <div class="format-help">Marketing can only write website articles &mdash; no access to patients, appointments or billing.</div>
         </div>
         <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Create Login</button></div>
       </form>`);
