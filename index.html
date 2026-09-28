@@ -311,19 +311,22 @@ const state = {
   viewParams: {},
 };
 
-const ROLE_LABELS = { admin: "Admin", doctor: "Doctor", reception: "Reception", billing: "Billing", marketing: "Marketing" };
-const STAFF_ROLES = ["admin","doctor","reception","billing","marketing"];
+const ROLE_LABELS = { admin: "Admin", doctor: "Doctor", reception: "Reception", billing: "Billing", marketing: "Marketing", front_office: "Front Office" };
+const STAFF_ROLES = ["admin","doctor","reception","billing","marketing","front_office"];
 
+// "Front Office" = a single login combining Reception + Billing duties (a
+// stopgap for a solo staff member handling both, added 2026-09-28; see the
+// per-user permission toggles item on the roadmap for the fuller version).
 const NAV_ITEMS = [
-  { key: "home", label: "Dashboard", icon: "📊", roles: ["admin","doctor","reception","billing"] },
-  { key: "patients", label: "Patients", icon: "🧑‍🤝‍🧑", roles: ["admin","doctor","reception","billing"] },
-  { key: "appointments", label: "Appointments", icon: "📅", roles: ["admin","doctor","reception"] },
+  { key: "home", label: "Dashboard", icon: "📊", roles: ["admin","doctor","reception","billing","front_office"] },
+  { key: "patients", label: "Patients", icon: "🧑‍🤝‍🧑", roles: ["admin","doctor","reception","billing","front_office"] },
+  { key: "appointments", label: "Appointments", icon: "📅", roles: ["admin","doctor","reception","front_office"] },
   { key: "clinical", label: "Clinical Records", icon: "🩺", roles: ["admin","doctor"] },
   { key: "doctors", label: "Doctors & Services", icon: "👨‍⚕️", roles: ["admin"] },
-  { key: "billing", label: "Billing & Payments", icon: "💳", roles: ["admin","doctor","reception","billing"] },
+  { key: "billing", label: "Billing & Payments", icon: "💳", roles: ["admin","doctor","reception","billing","front_office"] },
   { key: "feedback", label: "Feedback & Escalations", icon: "⚠️", roles: ["admin","doctor"] },
   { key: "reports", label: "Reports", icon: "📄", roles: ["admin","doctor"] },
-  { key: "closures", label: "Closures & Holidays", icon: "🗓️", roles: ["admin","doctor","reception"] },
+  { key: "closures", label: "Closures & Holidays", icon: "🗓️", roles: ["admin","doctor","reception","front_office"] },
   { key: "articles", label: "Website Articles", icon: "📝", roles: ["admin","doctor","marketing"] },
   { key: "staff", label: "Staff & Users", icon: "🔑", roles: ["admin"] },
   { key: "data", label: "Import / Export / Backup", icon: "🗂️", roles: ["admin"] },
@@ -728,7 +731,7 @@ VIEWS.home = async function(content) {
       .gte("slot_time", new Date().toISOString()).order("slot_time", { ascending: true }).limit(8),
     can("admin","doctor") ? sb.from("escalations").select("id", { count: "exact", head: true }).eq("resolved", false) : Promise.resolve({count:0}),
     can("admin","doctor") ? sb.from("feedback").select("rating").not("rating","is",null).order("requested_at",{ascending:false}).limit(50) : Promise.resolve({data:[]}),
-    can("admin","billing") ? sb.from("invoices").select("amount", { count: "exact" }).in("status", ["unpaid","partial"]) : Promise.resolve({data:[],count:0}),
+    can("admin","billing","front_office") ? sb.from("invoices").select("amount", { count: "exact" }).in("status", ["unpaid","partial"]) : Promise.resolve({data:[],count:0}),
   ]);
 
   const ratings = (feedbackRecent.data||[]).map(f=>f.rating).filter(r=>r!=null);
@@ -740,7 +743,7 @@ VIEWS.home = async function(content) {
       <div class="stat-card"><div class="stat-label">Today's Appointments</div><div class="stat-value">${apptsToday.count ?? 0}</div></div>
       ${can("admin","doctor") ? `<div class="stat-card"><div class="stat-label">Open Escalations</div><div class="stat-value ${openEsc.count?'red':'green'}">${openEsc.count ?? 0}</div></div>` : ``}
       ${can("admin","doctor") ? `<div class="stat-card"><div class="stat-label">Avg Rating (last 50)</div><div class="stat-value yellow">${avgRating} ★</div></div>` : ``}
-      ${can("admin","billing") ? `<div class="stat-card"><div class="stat-label">Outstanding Balance</div><div class="stat-value red">${fmtMoney(outstandingTotal)}</div></div>` : ``}
+      ${can("admin","billing","front_office") ? `<div class="stat-card"><div class="stat-label">Outstanding Balance</div><div class="stat-value red">${fmtMoney(outstandingTotal)}</div></div>` : ``}
     </div>
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Upcoming Appointments</div></div>
@@ -772,7 +775,7 @@ VIEWS.patients = async function(content) {
     <div class="panel">
       <div class="panel-head">
         <div class="search-box">🔍 <input id="patientSearch" placeholder="Search name or phone…"></div>
-        ${can("admin","doctor","reception") ? `<button class="btn btn-primary btn-sm" id="addPatientBtn">+ Add Patient</button>` : ``}
+        ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-primary btn-sm" id="addPatientBtn">+ Add Patient</button>` : ``}
       </div>
       <table><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Last Contact</th><th></th></tr></thead>
       <tbody id="patientsTbody"><tr><td colspan="5" class="empty-state">Loading…</td></tr></tbody></table>
@@ -876,7 +879,7 @@ VIEWS.patientProfile = async function(content) {
       body.innerHTML = `
         <div class="panel">
           <div class="panel-head"><div class="panel-title">Details</div>
-            ${can("admin","doctor","reception") ? `<button class="btn btn-secondary btn-sm" id="editPatientBtn">Edit</button>` : ``}
+            ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="editPatientBtn">Edit</button>` : ``}
           </div>
           <div class="grid grid-2">
             <div><span class="muted">Email:</span> ${escapeHtml(patient.email||'—')}</div>
@@ -1050,13 +1053,13 @@ VIEWS.patientProfile = async function(content) {
       body.innerHTML = `
         <div class="panel">
           <div class="panel-head"><div class="panel-title">Invoices</div>
-            ${can("admin","billing","reception") ? `<button class="btn btn-primary btn-sm" id="addInvoiceBtn">+ New Invoice</button>` : ``}
+            ${can("admin","billing","reception","front_office") ? `<button class="btn btn-primary btn-sm" id="addInvoiceBtn">+ New Invoice</button>` : ``}
           </div>
           <table><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Status</th><th></th></tr></thead>
           <tbody>${(data||[]).map(inv=>`<tr>
             <td>${fmtDateOnly(inv.created_at)}</td><td>${escapeHtml(inv.description||'—')}</td><td>${fmtMoney(inv.amount)}</td>
             <td><span class="badge ${inv.status==='paid'?'green':inv.status==='partial'?'yellow':'red'}">${escapeHtml(inv.status)}</span></td>
-            <td>${can("admin","billing") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}">Record Payment</button>` : ``}</td>
+            <td>${can("admin","billing","front_office") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}">Record Payment</button>` : ``}</td>
           </tr>`).join("")||`<tr><td colspan="5" class="empty-state">No invoices yet.</td></tr>`}</tbody></table>
         </div>`;
       const addInvBtn = document.getElementById("addInvoiceBtn");
@@ -1089,7 +1092,7 @@ VIEWS.appointments = async function(content) {
             <option value="declined">Declined</option>
           </select>
         </div>
-        ${can("admin","doctor","reception") ? `<button class="btn btn-primary btn-sm" id="addApptBtn">+ New Appointment</button>` : ``}
+        ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-primary btn-sm" id="addApptBtn">+ New Appointment</button>` : ``}
       </div>
       <table><thead><tr><th>When</th><th>Patient</th><th>Doctor</th><th>Service</th><th>Status</th><th>Calendar</th><th></th></tr></thead>
       <tbody id="apptTbody"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody></table>
@@ -1109,7 +1112,7 @@ VIEWS.appointments = async function(content) {
         <td>${escapeHtml(a.service?.name||'—')}</td>
         <td>${statusBadge(a.status)}</td>
         <td>${a.google_event_id ? '<span class="badge green">Synced</span>' : '<span class="badge grey">Pending</span>'}</td>
-        <td>${can("admin","doctor","reception") ? `<select data-id="${a.id}" class="statusSelect">
+        <td>${can("admin","doctor","reception","front_office") ? `<select data-id="${a.id}" class="statusSelect">
             ${["confirmed","completed","cancelled","missed"].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
           </select>` : ``}</td>
       </tr>`).join("") || `<tr><td colspan="7" class="empty-state">No appointments found.</td></tr>`;
@@ -1401,7 +1404,7 @@ VIEWS.billing = async function(content) {
     </div>
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Invoices</div>
-        ${can("admin","billing","reception") ? `<button class="btn btn-primary btn-sm" id="newInvoiceBtn">+ New Invoice</button>` : ``}
+        ${can("admin","billing","reception","front_office") ? `<button class="btn btn-primary btn-sm" id="newInvoiceBtn">+ New Invoice</button>` : ``}
       </div>
       <table><thead><tr><th>Date</th><th>Patient</th><th>Description</th><th>Amount</th><th>Status</th><th></th></tr></thead>
       <tbody>${error ? `<tr><td colspan="6">Error: ${escapeHtml(error.message)}</td></tr>` :
@@ -1411,7 +1414,7 @@ VIEWS.billing = async function(content) {
           <td>${escapeHtml(inv.description||'—')}</td>
           <td>${fmtMoney(inv.amount)}</td>
           <td><span class="badge ${inv.status==='paid'?'green':inv.status==='partial'?'yellow':'red'}">${escapeHtml(inv.status)}</span></td>
-          <td>${can("admin","billing") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}" data-pid="${inv.patient_id}">Record Payment</button>` : ``}</td>
+          <td>${can("admin","billing","front_office") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}" data-pid="${inv.patient_id}">Record Payment</button>` : ``}</td>
         </tr>`).join("") || `<tr><td colspan="6" class="empty-state">No invoices yet.</td></tr>`}
       </tbody></table>
     </div>`;
