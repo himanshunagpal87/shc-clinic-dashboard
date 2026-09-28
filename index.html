@@ -339,6 +339,16 @@ function escapeHtml(s) {
   if (s === null || s === undefined) return "";
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
+// Same rule the WhatsApp/website booking flow already uses, so a number
+// typed here always matches what the bot stores - no more silent duplicate
+// patients from "91 98..." vs "9198..." vs a bare 10-digit number.
+function normalizePhone(raw) {
+  let digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length === 10) return "91" + digits;
+  if (digits.length === 11 && digits.startsWith("0")) return "91" + digits.slice(1);
+  if (digits.length === 12 && digits.startsWith("91")) return digits;
+  return digits; // anything unusual (foreign number, partial entry) - leave visible, don't guess
+}
 function fmtDate(d) {
   if (!d) return "—";
   const dt = new Date(d);
@@ -811,7 +821,7 @@ function openPatientForm(patient, onSaved) {
     <form id="patientForm">
       <div class="form-row mb-8">
         <div class="field"><label>Name *</label><input name="name" required value="${escapeHtml(p.name||'')}"></div>
-        <div class="field"><label>Phone *</label><input name="phone" required value="${escapeHtml(p.phone||'')}"></div>
+        <div class="field"><label>Phone *</label><input name="phone" required placeholder="10-digit number, e.g. 9811458797" value="${escapeHtml(p.phone||'')}"></div>
       </div>
       <div class="form-row mb-8">
         <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(p.email||'')}"></div>
@@ -836,15 +846,31 @@ function openPatientForm(patient, onSaved) {
       </div>
     </form>`);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
-  document.getElementById("patientForm").addEventListener("submit", async e => {
+  const patientForm = document.getElementById("patientForm");
+  // Clean up the number as soon as staff leave the field, so what they see
+  // matches what gets saved (and what the WhatsApp bot already stores).
+  patientForm.querySelectorAll('[name="phone"], [name="emergency_contact_phone"]').forEach(el => {
+    el.addEventListener("blur", () => { if (el.value.trim()) el.value = normalizePhone(el.value); });
+  });
+  patientForm.addEventListener("submit", async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const payload = Object.fromEntries(fd.entries());
+    payload.name = payload.name.trim().replace(/\s+/g, " ");
+    payload.phone = normalizePhone(payload.phone);
+    if (payload.emergency_contact_phone) payload.emergency_contact_phone = normalizePhone(payload.emergency_contact_phone);
     payload.updated_at = new Date().toISOString();
     let error;
     if (patient) ({ error } = await sb.from("patients").update(payload).eq("id", patient.id));
     else ({ error } = await sb.from("patients").insert(payload));
-    if (error) { toast("Error: " + error.message, "error"); return; }
+    if (error) {
+      if (error.message && error.message.includes("patients_phone_key")) {
+        toast(`A patient with the number ${payload.phone} already exists. Search Patients instead of adding a new one.`, "error");
+      } else {
+        toast("Error: " + error.message, "error");
+      }
+      return;
+    }
     toast("Patient saved.", "success");
     closeModal();
     onSaved && onSaved();
