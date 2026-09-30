@@ -63,6 +63,15 @@
     padding:10px 12px; color:var(--text); font-size:13.5px; font-family:inherit;
   }
   .field input:focus, .field select:focus, .field textarea:focus { outline:none; border-color:var(--accent); }
+  .field-error { color:var(--red); font-size:11px; margin-top:4px; min-height:14px; }
+  .field-hint { color:var(--text-muted); font-size:11px; margin-top:4px; }
+  .field input.has-error { border-color:var(--red); }
+  .field input.is-approx { border-style:dashed; border-color:var(--yellow); }
+  .combobox { position:relative; }
+  .combobox-list { position:absolute; top:100%; left:0; right:0; background:var(--card); border:1px solid var(--border); border-radius:8px; max-height:220px; overflow-y:auto; z-index:50; margin-top:4px; box-shadow:0 8px 24px rgba(0,0,0,0.35); }
+  .combobox-item { padding:8px 12px; font-size:13px; cursor:pointer; }
+  .combobox-item:hover, .combobox-item.active { background:var(--card-hover); }
+  .combobox-empty { padding:8px 12px; font-size:12px; color:var(--text-muted); }
   .btn { padding:10px 18px; border-radius:8px; border:none; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:.15s; }
   .btn-primary { background:var(--accent); color:#04231f; width:100%; justify-content:center; }
   .btn-primary:hover { background:var(--accent-light); }
@@ -349,6 +358,46 @@ function normalizePhone(raw) {
   if (digits.length === 12 && digits.startsWith("91")) return digits;
   return digits; // anything unusual (foreign number, partial entry) - leave visible, don't guess
 }
+// dd/mm/yyyy <-> ISO (yyyy-mm-dd) helpers for the DOB field. Only ISO ever
+// reaches Supabase; dd/mm/yyyy is purely the staff-facing display format.
+function isValidDMY(str) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(str||'').trim());
+  if (!m) return false;
+  const day = Number(m[1]), month = Number(m[2]), year = Number(m[3]);
+  if (month < 1 || month > 12 || year < 1900) return false;
+  const dt = new Date(year, month - 1, day);
+  if (dt.getFullYear() !== year || dt.getMonth() !== month - 1 || dt.getDate() !== day) return false; // rejects e.g. 31/02/2020
+  const today = new Date(); today.setHours(23,59,59,999);
+  if (dt > today) return false; // no future DOBs
+  return true;
+}
+function dmyToISO(str) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(str||'').trim());
+  if (!m) return null;
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+function isoToDMY(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||''));
+  if (!m) return "";
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+function computeAgeFromISO(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||''));
+  if (!m) return "";
+  const dob = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const md = today.getMonth() - dob.getMonth();
+  if (md < 0 || (md === 0 && today.getDate() < dob.getDate())) age--;
+  return age >= 0 ? age : "";
+}
+// Approximate DOB from an age only: 1 Jan of (this year - age). Callers must
+// mark the field as approximate in the UI - this is never exact.
+function approxDMYFromAge(age) {
+  const n = Number(age);
+  if (!Number.isFinite(n) || n < 0 || n > 130) return "";
+  return `01/01/${new Date().getFullYear() - Math.floor(n)}`;
+}
 function fmtDate(d) {
   if (!d) return "—";
   const dt = new Date(d);
@@ -443,6 +492,57 @@ function openModal(title, bodyHtml, opts) {
   });
 }
 function closeModal() { document.getElementById("modalRoot").innerHTML = ""; }
+
+/* ---------------------------------------------------------------------
+   SEARCHABLE PATIENT COMBOBOX
+   Markup: patientComboboxHtml() renders a text input + hidden `patient_id`
+   input, matching the field name every existing patient <select> used - so
+   the rest of the form code (FormData -> payload.patient_id) is untouched.
+   wirePatientCombobox() must be called once the markup is in the DOM.
+   --------------------------------------------------------------------- */
+function patientComboboxHtml(patients, opts) {
+  opts = opts || {};
+  const label = opts.label || "Patient *";
+  return `
+    <div class="field combobox" data-combobox>
+      <label>${escapeHtml(label)}</label>
+      <input type="text" class="combobox-input" placeholder="Search by name or phone…" autocomplete="off" ${opts.required !== false ? 'required' : ''}>
+      <input type="hidden" name="${opts.name || 'patient_id'}">
+      <div class="combobox-list" hidden></div>
+    </div>`;
+}
+function wirePatientCombobox(root, patients) {
+  const wrap = root.querySelector('[data-combobox]');
+  if (!wrap) return;
+  const input = wrap.querySelector('.combobox-input');
+  const hidden = wrap.querySelector('input[type="hidden"]');
+  const list = wrap.querySelector('.combobox-list');
+  const normPhone = s => String(s||'').replace(/[\s-]/g, '');
+  function render(term) {
+    const t = term.trim().toLowerCase();
+    const tDigits = normPhone(term).replace(/\D/g,'');
+    const matches = !t ? patients : patients.filter(p => {
+      const name = (p.name||'').toLowerCase();
+      const phone = normPhone(p.phone||'');
+      return name.includes(t) || (tDigits && phone.includes(tDigits));
+    });
+    list.innerHTML = matches.slice(0, 50).map(p =>
+      `<div class="combobox-item" data-id="${p.id}" data-label="${escapeHtml(p.name)} — ${escapeHtml(p.phone||'')}">${escapeHtml(p.name)} <span class="muted">${escapeHtml(p.phone||'')}</span></div>`
+    ).join("") || `<div class="combobox-empty">No matching patients</div>`;
+    list.hidden = false;
+    list.querySelectorAll('.combobox-item').forEach(item => {
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        hidden.value = item.dataset.id;
+        input.value = item.dataset.label;
+        list.hidden = true;
+      });
+    });
+  }
+  input.addEventListener('focus', () => render(input.value));
+  input.addEventListener('input', () => { hidden.value = ''; render(input.value); });
+  input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; }, 150));
+}
 
 /* ---------------------------------------------------------------------
    AUTH
@@ -825,9 +925,6 @@ function openPatientForm(patient, onSaved) {
       </div>
       <div class="form-row mb-8">
         <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(p.email||'')}"></div>
-        <div class="field"><label>Date of Birth</label><input name="dob" type="date" value="${p.dob||''}"></div>
-      </div>
-      <div class="form-row mb-8">
         <div class="field"><label>Gender</label>
           <select name="gender">
             <option value="">—</option>
@@ -836,8 +933,20 @@ function openPatientForm(patient, onSaved) {
             <option ${p.gender==='other'?'selected':''}>other</option>
           </select>
         </div>
-        <div class="field"><label>Emergency Contact Phone</label><input name="emergency_contact_phone" value="${escapeHtml(p.emergency_contact_phone||'')}"></div>
       </div>
+      <div class="form-row mb-8">
+        <div class="field">
+          <label>Date of Birth (dd/mm/yyyy)</label>
+          <input id="dobInput" placeholder="dd/mm/yyyy" autocomplete="off" value="${p.dob ? isoToDMY(p.dob) : ''}">
+          <div class="field-error" id="dobError"></div>
+        </div>
+        <div class="field">
+          <label>Age <span class="muted" id="ageApproxLabel" style="display:none;font-weight:400;">(approx., from age only)</span></label>
+          <input id="ageInput" type="number" min="0" max="130" autocomplete="off" value="${p.dob ? computeAgeFromISO(p.dob) : ''}">
+          <div class="field-hint">Type DOB above if known - it always wins. Age alone gives an approximate 1 Jan DOB.</div>
+        </div>
+      </div>
+      <div class="field mb-8"><label>Emergency Contact Phone</label><input name="emergency_contact_phone" value="${escapeHtml(p.emergency_contact_phone||'')}"></div>
       <div class="field mb-8"><label>Address</label><textarea name="address" rows="2">${escapeHtml(p.address||'')}</textarea></div>
       <div class="field mb-8"><label>Notes</label><textarea name="notes" rows="2">${escapeHtml(p.notes||'')}</textarea></div>
       <div class="modal-actions">
@@ -852,6 +961,48 @@ function openPatientForm(patient, onSaved) {
   patientForm.querySelectorAll('[name="phone"], [name="emergency_contact_phone"]').forEach(el => {
     el.addEventListener("blur", () => { if (el.value.trim()) el.value = normalizePhone(el.value); });
   });
+
+  // DOB <-> Age wiring. `dobIsApprox` tracks whether the DOB box currently
+  // holds a real typed date (false) or one we derived from Age alone (true,
+  // starts true because an empty box has nothing explicit in it yet). DOB
+  // always wins: once it holds a real date, editing Age never overwrites it.
+  const dobInput = document.getElementById("dobInput");
+  const ageInput = document.getElementById("ageInput");
+  const dobError = document.getElementById("dobError");
+  const ageApproxLabel = document.getElementById("ageApproxLabel");
+  let dobIsApprox = !(p.dob);
+  if (!p.dob) { ageApproxLabel.style.display = "none"; } // nothing entered yet
+  dobInput.addEventListener("input", () => {
+    const val = dobInput.value.trim();
+    dobInput.classList.remove("has-error");
+    if (!val) {
+      dobError.textContent = ""; dobIsApprox = true; ageApproxLabel.style.display = "none";
+      return;
+    }
+    if (!isValidDMY(val)) {
+      dobError.textContent = "Enter a valid date as dd/mm/yyyy (not in the future).";
+      dobInput.classList.add("has-error");
+      return;
+    }
+    dobError.textContent = "";
+    dobIsApprox = false;
+    ageApproxLabel.style.display = "none";
+    ageInput.value = computeAgeFromISO(dmyToISO(val));
+  });
+  ageInput.addEventListener("input", () => {
+    if (!dobIsApprox) return; // an explicit DOB is already present - it wins
+    const approx = approxDMYFromAge(ageInput.value);
+    if (approx) {
+      dobInput.value = approx;
+      dobError.textContent = "";
+      dobInput.classList.remove("has-error");
+      ageApproxLabel.style.display = "inline";
+    } else {
+      dobInput.value = "";
+      ageApproxLabel.style.display = "none";
+    }
+  });
+
   patientForm.addEventListener("submit", async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -860,6 +1011,20 @@ function openPatientForm(patient, onSaved) {
     payload.phone = normalizePhone(payload.phone);
     if (payload.emergency_contact_phone) payload.emergency_contact_phone = normalizePhone(payload.emergency_contact_phone);
     payload.updated_at = new Date().toISOString();
+    const dobVal = dobInput.value.trim();
+    if (dobVal) {
+      if (!isValidDMY(dobVal)) {
+        dobError.textContent = "Enter a valid date as dd/mm/yyyy (not in the future).";
+        dobInput.classList.add("has-error");
+        dobInput.focus();
+        return;
+      }
+      payload.dob = dmyToISO(dobVal);
+    } else if (ageInput.value.trim()) {
+      payload.dob = dmyToISO(approxDMYFromAge(ageInput.value.trim()));
+    } else {
+      payload.dob = null;
+    }
     let error;
     if (patient) ({ error } = await sb.from("patients").update(payload).eq("id", patient.id));
     else ({ error } = await sb.from("patients").insert(payload));
@@ -874,6 +1039,66 @@ function openPatientForm(patient, onSaved) {
     toast("Patient saved.", "success");
     closeModal();
     onSaved && onSaved();
+  });
+}
+
+/* ---------------------------------------------------------------------
+   SEND MESSAGE (freeform + templates -> staff_messages, queued for the
+   n8n WhatsApp scanner to pick up and send; this only ever inserts a
+   "pending" row here, it never talks to WhatsApp directly).
+   `appointment` is optional ({id, slot_time}) when opened from a booking row.
+   --------------------------------------------------------------------- */
+function openSendMessageModal(patient, appointment) {
+  const name = (patient.name || "").trim() || "there";
+  const apptLine = appointment && appointment.slot_time ? ` (${fmtDate(appointment.slot_time)})` : "";
+  const templates = [
+    { key: "booking_confirmation", label: "Booking Confirmation",
+      text: `Namaste ${name} 🙏 Aapki appointment Shivwik Holistic Care mein confirm ho gayi hai${apptLine}. Kisi bhi sawal ke liye is number par message kar sakte hain. Dhanyawad!` },
+    { key: "clinic_location", label: "Clinic Location",
+      text: `Namaste ${name} 🙏 Shivwik Holistic Care ka address hai: 182, Ambica Vihar, Paschim Vihar, New Delhi 110087. Google Maps location: https://maps.app.goo.gl/LDN7qMHyddyL3egG9 Milte hain! 😊` },
+    { key: "reminder", label: "Reminder",
+      text: `Namaste ${name} 🙏 Yeh ek reminder hai aapki appointment ke liye Shivwik Holistic Care mein${apptLine}. Please time par pahunch jaayein. Kisi badlav ke liye humein batayein. Dhanyawad!` },
+  ];
+  openModal(`Send Message${patient.name ? " — " + patient.name : ""}`, `
+    <div class="field mb-8">
+      <label>Quick Templates</label>
+      <div class="flex gap-8" style="flex-wrap:wrap;">
+        ${templates.map(t => `<button type="button" class="btn btn-secondary btn-sm" data-tpl="${t.key}">${escapeHtml(t.label)}</button>`).join("")}
+      </div>
+    </div>
+    <div class="field mb-8">
+      <label>Message</label>
+      <textarea id="msgText" rows="5" placeholder="Type a message, or pick a template above then edit it…"></textarea>
+    </div>
+    <div class="field-hint mb-8">To: ${escapeHtml(patient.phone || "—")}. This queues the message — actual WhatsApp delivery happens shortly after, via the automation.</div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+      <button type="button" class="btn btn-primary" id="sendMsgBtn">Send</button>
+    </div>`);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  let usedTemplateKey = null;
+  document.querySelectorAll("[data-tpl]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const tpl = templates.find(t => t.key === btn.dataset.tpl);
+      document.getElementById("msgText").value = tpl.text;
+      usedTemplateKey = tpl.key;
+    });
+  });
+  document.getElementById("sendMsgBtn").addEventListener("click", async () => {
+    const text = document.getElementById("msgText").value.trim();
+    if (!text) { toast("Type a message or choose a template first.", "error"); return; }
+    const payload = {
+      patient_id: patient.id,
+      appointment_id: (appointment && appointment.id) || null,
+      template_key: usedTemplateKey,
+      message_text: text,
+      status: "pending",
+      created_by: state.staff.id,
+    };
+    const { error } = await sb.from("staff_messages").insert(payload);
+    if (error) { toast("Error: " + error.message, "error"); return; }
+    closeModal();
+    toast("Message queued — it will be sent via WhatsApp shortly.", "success");
   });
 }
 
@@ -905,7 +1130,10 @@ VIEWS.patientProfile = async function(content) {
       body.innerHTML = `
         <div class="panel">
           <div class="panel-head"><div class="panel-title">Details</div>
-            ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="editPatientBtn">Edit</button>` : ``}
+            <div class="flex gap-8">
+              ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="sendMsgFromProfileBtn">Send Message</button>` : ``}
+              ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="editPatientBtn">Edit</button>` : ``}
+            </div>
           </div>
           <div class="grid grid-2">
             <div><span class="muted">Email:</span> ${escapeHtml(patient.email||'—')}</div>
@@ -918,6 +1146,8 @@ VIEWS.patientProfile = async function(content) {
         </div>`;
       const editBtn = document.getElementById("editPatientBtn");
       if (editBtn) editBtn.addEventListener("click", () => openPatientForm(patient, () => navigate("patientProfile", { id })));
+      const sendMsgBtn = document.getElementById("sendMsgFromProfileBtn");
+      if (sendMsgBtn) sendMsgBtn.addEventListener("click", () => openSendMessageModal(patient, null));
     } else if (tab === "Clinical") {
       const nowIso = new Date().toISOString();
       const [hist, protocols, sessionNotes, nextAppt] = await Promise.all([
@@ -1138,9 +1368,14 @@ VIEWS.appointments = async function(content) {
         <td>${escapeHtml(a.service?.name||'—')}</td>
         <td>${statusBadge(a.status)}</td>
         <td>${a.google_event_id ? '<span class="badge green">Synced</span>' : '<span class="badge grey">Pending</span>'}</td>
-        <td>${can("admin","doctor","reception","front_office") ? `<select data-id="${a.id}" class="statusSelect">
-            ${["confirmed","completed","cancelled","missed"].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
-          </select>` : ``}</td>
+        <td>
+          <div class="flex gap-8">
+            ${can("admin","doctor","reception","front_office") ? `<select data-id="${a.id}" class="statusSelect">
+              ${["confirmed","completed","cancelled","missed"].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
+            </select>` : ``}
+            ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" data-msgid="${a.id}">Message</button>` : ``}
+          </div>
+        </td>
       </tr>`).join("") || `<tr><td colspan="7" class="empty-state">No appointments found.</td></tr>`;
     tbody.querySelectorAll(".statusSelect").forEach(sel => {
       sel.addEventListener("change", async () => {
@@ -1148,6 +1383,16 @@ VIEWS.appointments = async function(content) {
         if (sel.value === "completed") payload.completed_at = new Date().toISOString();
         const { error } = await sb.from("appointments").update(payload).eq("id", sel.dataset.id);
         if (error) toast(error.message, "error"); else toast("Status updated.", "success");
+      });
+    });
+    tbody.querySelectorAll("[data-msgid]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const appt = (data||[]).find(x => x.id === btn.dataset.msgid);
+        if (!appt) return;
+        openSendMessageModal(
+          { id: appt.patient_id, name: appt.patient?.name, phone: appt.patient?.phone },
+          { id: appt.id, slot_time: appt.slot_time }
+        );
       });
     });
   }
@@ -1165,9 +1410,7 @@ async function openAppointmentForm(onSaved) {
   ]);
   openModal("New Appointment", `
     <form id="apptForm">
-      <div class="field mb-8"><label>Patient *</label>
-        <select name="patient_id" required>${(patients||[]).map(p=>`<option value="${p.id}">${escapeHtml(p.name)} — ${escapeHtml(p.phone||'')}</option>`).join("")}</select>
-      </div>
+      ${patientComboboxHtml(patients||[])}
       <div class="field mb-8"><label>Doctor</label>
         <select name="doctor_id"><option value="">—</option>${(doctors||[]).map(d=>`<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}</select>
       </div>
@@ -1177,10 +1420,12 @@ async function openAppointmentForm(onSaved) {
       <div class="field mb-8"><label>Date &amp; Time *</label><input name="slot_time" type="datetime-local" required></div>
       <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Book</button></div>
     </form>`);
+  wirePatientCombobox(document, patients||[]);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("apptForm").addEventListener("submit", async e => {
     e.preventDefault();
     const payload = Object.fromEntries(new FormData(e.target).entries());
+    if (!payload.patient_id) return toast("Please select a patient.", "error");
     payload.slot_time = new Date(payload.slot_time).toISOString();
     payload.status = "confirmed"; payload.source = "dashboard";
     if (!payload.doctor_id) delete payload.doctor_id;
@@ -1226,9 +1471,7 @@ VIEWS.clinical = async function(content) {
     const { data: patients } = await sb.from("patients").select("id,name,phone").order("name");
     openModal("Add Treatment Protocol", `
       <form id="quickProtoForm">
-        <div class="field mb-8"><label>Patient *</label>
-          <select name="patient_id" required>${(patients||[]).map(p=>`<option value="${p.id}">${escapeHtml(p.name)} — ${escapeHtml(p.phone||'')}</option>`).join("")}</select>
-        </div>
+        ${patientComboboxHtml(patients||[])}
         <div class="field mb-8"><label>Protocol Name *</label><input name="protocol_name" required></div>
         <div class="field mb-8"><label>Description</label><textarea name="description" rows="2"></textarea></div>
         <div class="form-row mb-8">
@@ -1238,10 +1481,12 @@ VIEWS.clinical = async function(content) {
         <div class="field mb-8"><label>Prognosis</label><textarea name="prognosis" rows="2" placeholder="Expected outcome / recovery trajectory"></textarea></div>
         <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
       </form>`);
+    wirePatientCombobox(document, patients||[]);
     document.getElementById("cancelBtn").addEventListener("click", closeModal);
     document.getElementById("quickProtoForm").addEventListener("submit", async e => {
       e.preventDefault();
       const payload = Object.fromEntries(new FormData(e.target).entries());
+      if (!payload.patient_id) return toast("Please select a patient.", "error");
       if (payload.sessions_planned) payload.sessions_planned = Number(payload.sessions_planned); else delete payload.sessions_planned;
       if (!payload.prognosis) delete payload.prognosis;
       payload.created_by = state.staff.id;
@@ -1477,9 +1722,7 @@ function openInvoiceForm(patientId, onSaved) {
 function openInvoiceFormGeneric(patients, onSaved) {
   openModal("New Invoice", `
     <form id="invForm">
-      <div class="field mb-8"><label>Patient *</label>
-        <select name="patient_id" required>${patients.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} — ${escapeHtml(p.phone||'')}</option>`).join("")}</select>
-      </div>
+      ${patientComboboxHtml(patients)}
       <div class="field mb-8"><label>Description *</label><input name="description" required></div>
       <div class="form-row mb-8">
         <div class="field"><label>Amount (₹) *</label><input name="amount" type="number" step="0.01" min="0" required></div>
@@ -1487,10 +1730,12 @@ function openInvoiceFormGeneric(patients, onSaved) {
       </div>
       <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Create</button></div>
     </form>`);
+  wirePatientCombobox(document, patients);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("invForm").addEventListener("submit", async e => {
     e.preventDefault();
     const payload = Object.fromEntries(new FormData(e.target).entries());
+    if (!payload.patient_id) return toast("Please select a patient.", "error");
     payload.amount = Number(payload.amount); payload.created_by = state.staff.id;
     const { error } = await sb.from("invoices").insert(payload);
     if (error) return toast(error.message, "error");
