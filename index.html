@@ -1466,7 +1466,7 @@ VIEWS.patientProfile = async function(content) {
         </div>`;
       body.querySelectorAll("[data-editid]").forEach(btn => {
         btn.addEventListener("click", () => {
-          const appt = (data||[]).find(x => x.id === btn.dataset.editid);
+          const appt = (data||[]).find(x => String(x.id) === btn.dataset.editid);
           if (appt) openEditAppointmentForm(appt, () => renderTab("Appointments"));
         });
       });
@@ -1591,13 +1591,13 @@ VIEWS.appointments = async function(content) {
     });
     tbody.querySelectorAll("[data-editid]").forEach(btn => {
       btn.addEventListener("click", () => {
-        const appt = (data||[]).find(x => x.id === btn.dataset.editid);
+        const appt = (data||[]).find(x => String(x.id) === btn.dataset.editid);
         if (appt) openEditAppointmentForm(appt, load);
       });
     });
     tbody.querySelectorAll("[data-msgid]").forEach(btn => {
       btn.addEventListener("click", () => {
-        const appt = (data||[]).find(x => x.id === btn.dataset.msgid);
+        const appt = (data||[]).find(x => String(x.id) === btn.dataset.msgid);
         if (!appt) return;
         openSendMessageModal(
           { id: appt.patient_id, name: appt.patient?.name, phone: appt.patient?.phone },
