@@ -43,11 +43,13 @@
   ::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
 
   /* ---------- LOGIN ---------- */
-  #loginScreen {
+  #loginScreen, #otpScreen {
     position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
     background:radial-gradient(circle at 30% 20%, rgba(20,184,166,0.12), transparent 45%), var(--bg);
     z-index:500;
   }
+  #otpCode { letter-spacing:6px; font-size:20px; text-align:center; font-family:'Space Grotesk',sans-serif; }
+  #otpError { color:var(--red); font-size:12.5px; margin-top:10px; min-height:16px; }
   .login-card {
     width:380px; max-width:92vw; background:var(--surface); border:1px solid var(--border);
     border-radius:16px; padding:36px 32px;
@@ -257,6 +259,32 @@
   </div>
 </div>
 
+<!-- ===================== 2FA (WhatsApp OTP) ===================== -->
+<div id="otpScreen" style="display:none">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-icon">🏥</div>
+      <div>
+        <div class="logo-text">Shivwik Holistic Care</div>
+        <div class="logo-sub">Clinic Dashboard</div>
+      </div>
+    </div>
+    <p id="otpIntro" style="font-size:13px;color:var(--text-soft);margin-bottom:16px">A verification code has been sent to your WhatsApp. Enter the 6-digit code below.</p>
+    <form id="otpForm">
+      <div class="field">
+        <label>6-digit code</label>
+        <input type="text" id="otpCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="123456" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="otpVerifyBtn">Verify</button>
+      <div id="otpError"></div>
+    </form>
+    <p style="font-size:11.5px;margin-top:16px;display:flex;justify-content:space-between;">
+      <a href="#" id="otpResendLink">Resend code</a>
+      <a href="#" id="otpCancelLink" style="color:var(--text-muted)">Cancel &amp; sign out</a>
+    </p>
+  </div>
+</div>
+
 <!-- ===================== APP ===================== -->
 <div id="app">
   <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
@@ -307,6 +335,8 @@
 const SUPABASE_URL = "https://ycxuipirpyjadkavkcrf.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_kOEXCSZkqQMV0MJ8kaa1Gw_v_QaPTdm";
 const EDGE_FUNCTION_URL = SUPABASE_URL + "/functions/v1/admin-manage-staff";
+const EDGE_2FA_REQUEST_URL = SUPABASE_URL + "/functions/v1/staff-2fa-request";
+const EDGE_2FA_VERIFY_URL = SUPABASE_URL + "/functions/v1/staff-2fa-verify";
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -339,6 +369,7 @@ const NAV_ITEMS = [
   { key: "articles", label: "Website Articles", icon: "📝", roles: ["admin","doctor","marketing"] },
   { key: "staff", label: "Staff & Users", icon: "🔑", roles: ["admin"] },
   { key: "data", label: "Import / Export / Backup", icon: "🗂️", roles: ["admin"] },
+  { key: "trash", label: "Trash", icon: "🗑️", roles: ["admin"] },
 ];
 
 /* ---------------------------------------------------------------------
@@ -429,6 +460,50 @@ function toast(msg, type) {
   setTimeout(() => el.remove(), 4500);
 }
 function can(...roles) { return state.staff && roles.includes(state.staff.role); }
+
+/* ---------------------------------------------------------------------
+   SOFT DELETE / TRASH (admin only)
+   Every delete from the dashboard is a soft delete: it sets deleted_at
+   on the row and nothing more. A separate n8n job permanently purges rows
+   whose deleted_at is more than 7 days old - the dashboard never issues a
+   real SQL DELETE against these tables (see confirmSoftDelete below).
+   --------------------------------------------------------------------- */
+const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+function timeLeftLabel(deletedAt) {
+  const purgeAt = new Date(deletedAt).getTime() + TRASH_RETENTION_MS;
+  const msLeft = purgeAt - Date.now();
+  if (!isFinite(msLeft) || msLeft <= 0) return "Purging soon";
+  const daysLeft = Math.floor(msLeft / (24*60*60*1000));
+  if (daysLeft >= 1) return `${daysLeft} day${daysLeft===1?'':'s'} left`;
+  const hoursLeft = Math.max(1, Math.round(msLeft / (60*60*1000)));
+  return `${hoursLeft} hour${hoursLeft===1?'':'s'} left`;
+}
+async function confirmSoftDelete(table, id, entityLabel, onDone) {
+  if (!can("admin")) return;
+  if (!confirm("This will move it to Trash. It can be restored within 7 days, after which it's permanently removed.")) return;
+  const { error } = await sb.from(table).update({ deleted_at: new Date().toISOString() }).eq("id", id);
+  if (error) return toast(error.message, "error");
+  toast(`${entityLabel} moved to Trash.`, "success");
+  onDone && onDone();
+}
+async function restoreFromTrash(table, id, onDone) {
+  const { error } = await sb.from(table).update({ deleted_at: null }).eq("id", id);
+  if (error) return toast(error.message, "error");
+  toast("Restored.", "success");
+  onDone && onDone();
+}
+/* Direct, immediate, permanent single-field clear (admin only) - distinct
+   from soft delete: no Trash, no restore, the confirm dialog IS the safety
+   net. Used on the patient edit form for email/notes/address/emergency
+   contact fields. */
+async function confirmClearField(table, id, field, fieldLabel, onCleared) {
+  if (!can("admin")) return;
+  if (!confirm(`Clear the '${fieldLabel}' field? This cannot be undone.`)) return;
+  const { error } = await sb.from(table).update({ [field]: null }).eq("id", id);
+  if (error) return toast(error.message, "error");
+  toast(`Cleared ${fieldLabel}.`, "success");
+  onCleared && onCleared();
+}
 function downloadFile(filename, content, mime) {
   const blob = new Blob([content], { type: mime || "application/octet-stream" });
   const url = URL.createObjectURL(blob);
@@ -577,12 +652,53 @@ async function handleLogin(e) {
     state.staff = profile;
     storeSet(SIGNED_IN_AT_KEY, Date.now());
     markActivity(true);
-    enterApp();
+
+    const twofa = await call2faFn(EDGE_2FA_REQUEST_URL, {});
+    if (twofa && twofa.error) {
+      state.session = null; state.staff = null;
+      await sb.auth.signOut();
+      throw new Error(twofa.message || "This account could not be verified for sign-in. Contact your clinic admin.");
+    }
+    if (twofa && twofa.required) {
+      showOtpScreen();
+    } else {
+      enterApp();
+    }
   } catch (err) {
     errEl.textContent = err.message || "Sign-in failed.";
   } finally {
     btn.disabled = false; btn.textContent = "Sign In";
   }
+}
+
+/* ---------------------------------------------------------------------
+   2FA (WhatsApp OTP) — staff-2fa-request / staff-2fa-verify Edge Functions,
+   same auth header pattern as callAdminFn/admin-manage-staff below.
+   --------------------------------------------------------------------- */
+async function call2faFn(url, payload) {
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + session.access_token,
+        "apikey": SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify(payload || {}),
+    });
+    return await res.json();
+  } catch (err) {
+    return { error: "network", message: err.message || "Could not reach the verification service. Check your connection and try again." };
+  }
+}
+function showOtpScreen() {
+  document.getElementById("loginScreen").style.display = "none";
+  document.getElementById("otpScreen").style.display = "flex";
+  document.getElementById("otpError").textContent = "";
+  const codeInput = document.getElementById("otpCode");
+  codeInput.value = "";
+  codeInput.focus();
 }
 
 async function handleSignOut(reason) {
@@ -806,6 +922,7 @@ const PAGE_META = {
   articles: ["Website Articles", "Write, review and schedule articles for shivwikholisticcare.com"],
   staff: ["Staff & Users", "Manage dashboard logins and roles"],
   data: ["Import / Export / Backup", "Bulk data tools"],
+  trash: ["Trash", "Deleted records — restore within 7 days, then permanently purged"],
   patientProfile: ["Patient", ""],
 };
 
@@ -836,12 +953,12 @@ VIEWS.home = async function(content) {
   const [apptsToday, upcoming, openEsc, feedbackRecent, invoicesOpen] = await Promise.all([
     sb.from("appointments").select("id", { count: "exact", head: true })
       .gte("slot_time", todayStart.toISOString()).lte("slot_time", todayEnd.toISOString())
-      .in("status", ["confirmed","completed"]),
+      .in("status", ["confirmed","completed"]).is("deleted_at", null),
     sb.from("appointments").select("id, slot_time, status, patient:patients(name,phone), doctor:doctors(name)")
-      .gte("slot_time", new Date().toISOString()).order("slot_time", { ascending: true }).limit(8),
+      .gte("slot_time", new Date().toISOString()).is("deleted_at", null).order("slot_time", { ascending: true }).limit(8),
     can("admin","doctor") ? sb.from("escalations").select("id", { count: "exact", head: true }).eq("resolved", false) : Promise.resolve({count:0}),
-    can("admin","doctor") ? sb.from("feedback").select("rating").not("rating","is",null).order("requested_at",{ascending:false}).limit(50) : Promise.resolve({data:[]}),
-    can("admin","billing","front_office") ? sb.from("invoices").select("amount", { count: "exact" }).in("status", ["unpaid","partial"]) : Promise.resolve({data:[],count:0}),
+    can("admin","doctor") ? sb.from("feedback").select("rating").not("rating","is",null).is("deleted_at", null).order("requested_at",{ascending:false}).limit(50) : Promise.resolve({data:[]}),
+    can("admin","billing","front_office") ? sb.from("invoices").select("amount", { count: "exact" }).in("status", ["unpaid","partial"]).is("deleted_at", null) : Promise.resolve({data:[],count:0}),
   ]);
 
   const ratings = (feedbackRecent.data||[]).map(f=>f.rating).filter(r=>r!=null);
@@ -892,7 +1009,7 @@ VIEWS.patients = async function(content) {
     </div>`;
 
   async function load(term) {
-    let q = sb.from("patients").select("*").order("created_at", { ascending: false }).limit(200);
+    let q = sb.from("patients").select("*").is("deleted_at", null).order("created_at", { ascending: false }).limit(200);
     if (term) q = q.or(`name.ilike.%${term}%,phone.ilike.%${term}%`);
     const { data, error } = await q;
     const tbody = document.getElementById("patientsTbody");
@@ -915,8 +1032,12 @@ VIEWS.patients = async function(content) {
   if (addBtn) addBtn.addEventListener("click", () => openPatientForm(null, () => load(document.getElementById("patientSearch").value.trim())));
 };
 
+function clearFieldBtnHtml(showClear, field, label) {
+  return showClear ? `<button type="button" class="btn btn-secondary btn-sm" data-clear-field="${field}" data-clear-label="${escapeHtml(label)}" title="Clear ${escapeHtml(label)}" style="flex-shrink:0">✕ Clear</button>` : ``;
+}
 function openPatientForm(patient, onSaved) {
   const p = patient || {};
+  const showClear = !!patient && can("admin"); // clearing a field is an immediate DB write - only meaningful (and only offered) once the patient already exists
   openModal(patient ? "Edit Patient" : "Add Patient", `
     <form id="patientForm">
       <div class="form-row mb-8">
@@ -924,7 +1045,9 @@ function openPatientForm(patient, onSaved) {
         <div class="field"><label>Phone *</label><input name="phone" required placeholder="10-digit number, e.g. 9811458797" value="${escapeHtml(p.phone||'')}"></div>
       </div>
       <div class="form-row mb-8">
-        <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(p.email||'')}"></div>
+        <div class="field"><label>Email</label>
+          <div class="flex gap-8"><input name="email" type="email" style="flex:1" value="${escapeHtml(p.email||'')}">${clearFieldBtnHtml(showClear,'email','Email')}</div>
+        </div>
         <div class="field"><label>Gender</label>
           <select name="gender">
             <option value="">—</option>
@@ -946,9 +1069,20 @@ function openPatientForm(patient, onSaved) {
           <div class="field-hint">Type DOB above if known - it always wins. Age alone gives an approximate 1 Jan DOB.</div>
         </div>
       </div>
-      <div class="field mb-8"><label>Emergency Contact Phone</label><input name="emergency_contact_phone" value="${escapeHtml(p.emergency_contact_phone||'')}"></div>
-      <div class="field mb-8"><label>Address</label><textarea name="address" rows="2">${escapeHtml(p.address||'')}</textarea></div>
-      <div class="field mb-8"><label>Notes</label><textarea name="notes" rows="2">${escapeHtml(p.notes||'')}</textarea></div>
+      <div class="form-row mb-8">
+        <div class="field"><label>Emergency Contact Name</label>
+          <div class="flex gap-8"><input name="emergency_contact_name" style="flex:1" value="${escapeHtml(p.emergency_contact_name||'')}">${clearFieldBtnHtml(showClear,'emergency_contact_name','Emergency Contact Name')}</div>
+        </div>
+        <div class="field"><label>Emergency Contact Phone</label>
+          <div class="flex gap-8"><input name="emergency_contact_phone" style="flex:1" value="${escapeHtml(p.emergency_contact_phone||'')}">${clearFieldBtnHtml(showClear,'emergency_contact_phone','Emergency Contact Phone')}</div>
+        </div>
+      </div>
+      <div class="field mb-8"><label>Address</label>
+        <div class="flex gap-8"><textarea name="address" rows="2" style="flex:1">${escapeHtml(p.address||'')}</textarea>${clearFieldBtnHtml(showClear,'address','Address')}</div>
+      </div>
+      <div class="field mb-8"><label>Notes</label>
+        <div class="flex gap-8"><textarea name="notes" rows="2" style="flex:1">${escapeHtml(p.notes||'')}</textarea>${clearFieldBtnHtml(showClear,'notes','Notes')}</div>
+      </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
         <button type="submit" class="btn btn-primary">Save</button>
@@ -960,6 +1094,19 @@ function openPatientForm(patient, onSaved) {
   // matches what gets saved (and what the WhatsApp bot already stores).
   patientForm.querySelectorAll('[name="phone"], [name="emergency_contact_phone"]').forEach(el => {
     el.addEventListener("blur", () => { if (el.value.trim()) el.value = normalizePhone(el.value); });
+  });
+  // Admin-only per-field "Clear" buttons: immediate, direct UPDATE of just
+  // that column to null - not a soft delete, no Trash entry, no undo beyond
+  // the confirm dialog itself.
+  patientForm.querySelectorAll("[data-clear-field]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const field = btn.dataset.clearField, label = btn.dataset.clearLabel;
+      confirmClearField("patients", patient.id, field, label, () => {
+        const input = patientForm.querySelector(`[name="${field}"]`);
+        if (input) input.value = "";
+        p[field] = null;
+      });
+    });
   });
 
   // DOB <-> Age wiring. `dobIsApprox` tracks whether the DOB box currently
@@ -1107,7 +1254,7 @@ function openSendMessageModal(patient, appointment) {
    --------------------------------------------------------------------- */
 VIEWS.patientProfile = async function(content) {
   const id = state.viewParams.id;
-  const { data: patient, error } = await sb.from("patients").select("*").eq("id", id).maybeSingle();
+  const { data: patient, error } = await sb.from("patients").select("*").eq("id", id).is("deleted_at", null).maybeSingle();
   if (error || !patient) { content.innerHTML = `<div class="panel">Patient not found.</div>`; return; }
   document.getElementById("pageTitle").textContent = patient.name || "Patient";
   document.getElementById("pageSub").textContent = patient.phone || "";
@@ -1133,13 +1280,14 @@ VIEWS.patientProfile = async function(content) {
             <div class="flex gap-8">
               ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="sendMsgFromProfileBtn">Send Message</button>` : ``}
               ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="editPatientBtn">Edit</button>` : ``}
+              ${can("admin") ? `<button class="btn btn-danger btn-sm" id="deletePatientBtn">Delete</button>` : ``}
             </div>
           </div>
           <div class="grid grid-2">
             <div><span class="muted">Email:</span> ${escapeHtml(patient.email||'—')}</div>
             <div><span class="muted">DOB:</span> ${fmtDateOnly(patient.dob)}</div>
             <div><span class="muted">Gender:</span> ${escapeHtml(patient.gender||'—')}</div>
-            <div><span class="muted">Emergency Contact:</span> ${escapeHtml(patient.emergency_contact_phone||'—')}</div>
+            <div><span class="muted">Emergency Contact:</span> ${escapeHtml(patient.emergency_contact_name||'—')} ${escapeHtml(patient.emergency_contact_phone||'')}</div>
             <div style="grid-column:1/-1"><span class="muted">Address:</span> ${escapeHtml(patient.address||'—')}</div>
             <div style="grid-column:1/-1"><span class="muted">Notes:</span> ${escapeHtml(patient.notes||'—')}</div>
           </div>
@@ -1148,13 +1296,15 @@ VIEWS.patientProfile = async function(content) {
       if (editBtn) editBtn.addEventListener("click", () => openPatientForm(patient, () => navigate("patientProfile", { id })));
       const sendMsgBtn = document.getElementById("sendMsgFromProfileBtn");
       if (sendMsgBtn) sendMsgBtn.addEventListener("click", () => openSendMessageModal(patient, null));
+      const deleteBtn = document.getElementById("deletePatientBtn");
+      if (deleteBtn) deleteBtn.addEventListener("click", () => confirmSoftDelete("patients", patient.id, "Patient", () => navigate("patients")));
     } else if (tab === "Clinical") {
       const nowIso = new Date().toISOString();
       const [hist, protocols, sessionNotes, nextAppt] = await Promise.all([
         sb.from("medical_history").select("*").eq("patient_id", id).order("created_at",{ascending:false}),
         sb.from("treatment_protocols").select("*").eq("patient_id", id).order("created_at",{ascending:false}),
         sb.from("treatment_session_notes").select("*, protocol:treatment_protocols(protocol_name)").eq("patient_id", id).order("session_date",{ascending:false}),
-        sb.from("appointments").select("slot_time,status,service:services(name),doctor:doctors(name)").eq("patient_id", id).gte("slot_time", nowIso).in("status",["confirmed","pending_doctor_approval"]).order("slot_time",{ascending:true}).limit(1),
+        sb.from("appointments").select("slot_time,status,service:services(name),doctor:doctors(name)").eq("patient_id", id).is("deleted_at", null).gte("slot_time", nowIso).in("status",["confirmed","pending_doctor_approval"]).order("slot_time",{ascending:true}).limit(1),
       ]);
       const next = (nextAppt.data||[])[0];
       const activeProtocols = (protocols.data||[]).filter(p=>p.status==='active');
@@ -1295,17 +1445,22 @@ VIEWS.patientProfile = async function(content) {
       if (addSessionBtn) addSessionBtn.addEventListener("click", () => openSessionNoteForm(protocols.data[0]?.id));
       body.querySelectorAll("[data-add-session]").forEach(btn => btn.addEventListener("click", () => openSessionNoteForm(btn.dataset.addSession)));
     } else if (tab === "Appointments") {
-      const { data } = await sb.from("appointments").select("*, doctor:doctors(name)").eq("patient_id", id).order("slot_time",{ascending:false});
+      const { data } = await sb.from("appointments").select("*, doctor:doctors(name)").eq("patient_id", id).is("deleted_at", null).order("slot_time",{ascending:false});
       body.innerHTML = `
         <div class="panel">
-          <table><thead><tr><th>When</th><th>Doctor</th><th>Status</th><th>Calendar</th></tr></thead>
+          <table><thead><tr><th>When</th><th>Doctor</th><th>Status</th><th>Calendar</th><th></th></tr></thead>
           <tbody>${(data||[]).map(a=>`<tr>
             <td>${fmtDate(a.slot_time)}</td><td>${escapeHtml(a.doctor?.name||'—')}</td><td>${statusBadge(a.status)}</td>
             <td>${a.google_event_id ? '<span class="badge green">Synced</span>' : '<span class="badge grey">Pending</span>'}</td>
-          </tr>`).join("")||`<tr><td colspan="4" class="empty-state">No appointments yet.</td></tr>`}</tbody></table>
+            <td>${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-appt="${a.id}">Delete</button>` : ``}</td>
+          </tr>`).join("")||`<tr><td colspan="5" class="empty-state">No appointments yet.</td></tr>`}</tbody></table>
         </div>`;
+      body.querySelectorAll("[data-del-appt]").forEach(btn => {
+        btn.addEventListener("click", () => confirmSoftDelete("appointments", btn.dataset.delAppt, "Appointment", () => renderTab("Appointments")));
+      });
     } else if (tab === "Billing") {
-      const { data } = await sb.from("invoices").select("*, payments(*)").eq("patient_id", id).order("created_at",{ascending:false});
+      const { data } = await sb.from("invoices").select("*, payments(*)").eq("patient_id", id).is("deleted_at", null).order("created_at",{ascending:false});
+      (data||[]).forEach(inv => { inv.payments = (inv.payments||[]).filter(p => !p.deleted_at); });
       body.innerHTML = `
         <div class="panel">
           <div class="panel-head"><div class="panel-title">Invoices</div>
@@ -1315,13 +1470,27 @@ VIEWS.patientProfile = async function(content) {
           <tbody>${(data||[]).map(inv=>`<tr>
             <td>${fmtDateOnly(inv.created_at)}</td><td>${escapeHtml(inv.description||'—')}</td><td>${fmtMoney(inv.amount)}</td>
             <td><span class="badge ${inv.status==='paid'?'green':inv.status==='partial'?'yellow':'red'}">${escapeHtml(inv.status)}</span></td>
-            <td>${can("admin","billing","front_office") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}">Record Payment</button>` : ``}</td>
-          </tr>`).join("")||`<tr><td colspan="5" class="empty-state">No invoices yet.</td></tr>`}</tbody></table>
+            <td class="flex gap-8">
+              ${can("admin","billing","front_office") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}">Record Payment</button>` : ``}
+              ${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-inv="${inv.id}">Delete</button>` : ``}
+            </td>
+          </tr>${(inv.payments||[]).length ? `<tr><td></td><td colspan="4" style="padding-top:0">
+            <table style="margin-top:4px"><tbody>${inv.payments.map(p=>`<tr>
+              <td style="font-size:12px" class="muted">${fmtDate(p.created_at)} — ${fmtMoney(p.amount)} (${escapeHtml(p.method||'—')})</td>
+              <td style="text-align:right">${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-pay="${p.id}">Delete</button>` : ``}</td>
+            </tr>`).join("")}</tbody></table>
+          </td></tr>` : ``}`).join("")||`<tr><td colspan="5" class="empty-state">No invoices yet.</td></tr>`}</tbody></table>
         </div>`;
       const addInvBtn = document.getElementById("addInvoiceBtn");
       if (addInvBtn) addInvBtn.addEventListener("click", () => openInvoiceForm(id, () => renderTab("Billing")));
       body.querySelectorAll("[data-pay]").forEach(btn => {
         btn.addEventListener("click", () => openPaymentForm(btn.dataset.pay, id, Number(btn.dataset.amount), () => renderTab("Billing")));
+      });
+      body.querySelectorAll("[data-del-inv]").forEach(btn => {
+        btn.addEventListener("click", () => confirmSoftDelete("invoices", btn.dataset.delInv, "Invoice", () => renderTab("Billing")));
+      });
+      body.querySelectorAll("[data-del-pay]").forEach(btn => {
+        btn.addEventListener("click", () => confirmSoftDelete("payments", btn.dataset.delPay, "Payment", () => renderTab("Billing")));
       });
     }
   }
@@ -1355,7 +1524,7 @@ VIEWS.appointments = async function(content) {
     </div>`;
 
   async function load(status) {
-    let q = sb.from("appointments").select("*, patient:patients(name,phone), doctor:doctors(name), service:services(name)").order("slot_time",{ascending:false}).limit(200);
+    let q = sb.from("appointments").select("*, patient:patients(name,phone), doctor:doctors(name), service:services(name)").is("deleted_at", null).order("slot_time",{ascending:false}).limit(200);
     if (status) q = q.eq("status", status);
     const { data, error } = await q;
     const tbody = document.getElementById("apptTbody");
@@ -1374,6 +1543,7 @@ VIEWS.appointments = async function(content) {
               ${["confirmed","completed","cancelled","missed"].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
             </select>` : ``}
             ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" data-msgid="${a.id}">Message</button>` : ``}
+            ${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-appt="${a.id}">Delete</button>` : ``}
           </div>
         </td>
       </tr>`).join("") || `<tr><td colspan="7" class="empty-state">No appointments found.</td></tr>`;
@@ -1395,6 +1565,9 @@ VIEWS.appointments = async function(content) {
         );
       });
     });
+    tbody.querySelectorAll("[data-del-appt]").forEach(btn => {
+      btn.addEventListener("click", () => confirmSoftDelete("appointments", btn.dataset.delAppt, "Appointment", () => load(status)));
+    });
   }
   await load("");
   document.getElementById("statusFilter").addEventListener("change", e => load(e.target.value));
@@ -1404,7 +1577,7 @@ VIEWS.appointments = async function(content) {
 
 async function openAppointmentForm(onSaved) {
   const [{ data: patients }, { data: doctors }, { data: services }] = await Promise.all([
-    sb.from("patients").select("id,name,phone").order("name"),
+    sb.from("patients").select("id,name,phone").is("deleted_at", null).order("name"),
     sb.from("doctors").select("id,name").eq("is_active", true).order("name"),
     sb.from("services").select("id,name,specialty").eq("is_active", true).order("specialty").order("name"),
   ]);
@@ -1432,7 +1605,7 @@ async function openAppointmentForm(onSaved) {
     if (!payload.service_id) delete payload.service_id;
     if (payload.doctor_id) {
       const { data: clash } = await sb.from("appointments").select("id")
-        .eq("doctor_id", payload.doctor_id).eq("slot_time", payload.slot_time).eq("status", "confirmed");
+        .eq("doctor_id", payload.doctor_id).eq("slot_time", payload.slot_time).eq("status", "confirmed").is("deleted_at", null);
       if (clash && clash.length) {
         if (!confirm("This doctor already has a CONFIRMED appointment at this exact time. Book anyway as a double-booking?")) return;
       }
@@ -1468,7 +1641,7 @@ VIEWS.clinical = async function(content) {
     </div>`;
   content.querySelectorAll("[data-pid]").forEach(tr => tr.addEventListener("click", () => navigate("patientProfile", { id: tr.dataset.pid })));
   document.getElementById("quickAddProtocolBtn").addEventListener("click", async () => {
-    const { data: patients } = await sb.from("patients").select("id,name,phone").order("name");
+    const { data: patients } = await sb.from("patients").select("id,name,phone").is("deleted_at", null).order("name");
     openModal("Add Treatment Protocol", `
       <form id="quickProtoForm">
         ${patientComboboxHtml(patients||[])}
@@ -1665,7 +1838,7 @@ async function renderServicesTab(body) {
    ====================================================================== */
 VIEWS.billing = async function(content) {
   const { data, error } = await sb.from("invoices")
-    .select("*, patient:patients(name,phone)").order("created_at",{ascending:false}).limit(300);
+    .select("*, patient:patients(name,phone)").is("deleted_at", null).order("created_at",{ascending:false}).limit(300);
   const outstanding = (data||[]).filter(i=>i.status!=='paid'&&i.status!=='cancelled').reduce((s,i)=>s+Number(i.amount||0),0);
   content.innerHTML = `
     <div class="grid grid-3 mb-16">
@@ -1685,17 +1858,23 @@ VIEWS.billing = async function(content) {
           <td>${escapeHtml(inv.description||'—')}</td>
           <td>${fmtMoney(inv.amount)}</td>
           <td><span class="badge ${inv.status==='paid'?'green':inv.status==='partial'?'yellow':'red'}">${escapeHtml(inv.status)}</span></td>
-          <td>${can("admin","billing","front_office") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}" data-pid="${inv.patient_id}">Record Payment</button>` : ``}</td>
+          <td class="flex gap-8">
+            ${can("admin","billing","front_office") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}" data-pid="${inv.patient_id}">Record Payment</button>` : ``}
+            ${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-inv="${inv.id}">Delete</button>` : ``}
+          </td>
         </tr>`).join("") || `<tr><td colspan="6" class="empty-state">No invoices yet.</td></tr>`}
       </tbody></table>
     </div>`;
   const newBtn = document.getElementById("newInvoiceBtn");
   if (newBtn) newBtn.addEventListener("click", async () => {
-    const { data: patients } = await sb.from("patients").select("id,name,phone").order("name");
+    const { data: patients } = await sb.from("patients").select("id,name,phone").is("deleted_at", null).order("name");
     openInvoiceFormGeneric(patients||[], () => navigate("billing"));
   });
   content.querySelectorAll("[data-pay]").forEach(btn => {
     btn.addEventListener("click", () => openPaymentForm(btn.dataset.pay, btn.dataset.pid, Number(btn.dataset.amount), () => navigate("billing")));
+  });
+  content.querySelectorAll("[data-del-inv]").forEach(btn => {
+    btn.addEventListener("click", () => confirmSoftDelete("invoices", btn.dataset.delInv, "Invoice", () => navigate("billing")));
   });
 };
 
@@ -1774,7 +1953,7 @@ function openPaymentForm(invoiceId, patientId, remaining, onSaved) {
 VIEWS.feedback = async function(content) {
   const [{ data: esc, error: escErr }, { data: fb }] = await Promise.all([
     sb.from("escalations").select("*, patient:patients(name)").order("created_at",{ascending:false}).limit(200),
-    sb.from("feedback").select("*, patient:patients(name)").order("requested_at",{ascending:false}).limit(200),
+    sb.from("feedback").select("*, patient:patients(name)").is("deleted_at", null).order("requested_at",{ascending:false}).limit(200),
   ]);
   const open = (esc||[]).filter(e=>!e.resolved);
   const resolved = (esc||[]).filter(e=>e.resolved);
@@ -1795,12 +1974,13 @@ VIEWS.feedback = async function(content) {
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Recent Feedback Ratings</div></div>
       <p class="muted" style="font-size:12px;margin-bottom:10px">4&ndash;5★ ratings given after the website notice appear on the website as initials + month (e.g. "R.S., Oct 2026"). Patients can reply STOP on WhatsApp to be removed; admins can hide any rating here.</p>
-      <table><thead><tr><th>When</th><th>Patient</th><th>Rating</th><th>Website</th></tr></thead>
+      <table><thead><tr><th>When</th><th>Patient</th><th>Rating</th><th>Website</th><th></th></tr></thead>
       <tbody>${(fb||[]).map(f=>`<tr>
         <td>${fmtDate(f.requested_at)}</td><td>${escapeHtml(f.patient?.name||f.patient_phone||'—')}</td>
         <td>${f.rating ? `<span class="stars">${'★'.repeat(f.rating)}${'☆'.repeat(5-f.rating)}</span>` : `<span class="muted">No reply yet</span>`}</td>
         <td>${websiteRatingCell(f)}</td>
-      </tr>`).join("") || `<tr><td colspan="4" class="empty-state">No feedback collected yet.</td></tr>`}</tbody></table>
+        <td>${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-fb="${f.id}">Delete</button>` : ``}</td>
+      </tr>`).join("") || `<tr><td colspan="5" class="empty-state">No feedback collected yet.</td></tr>`}</tbody></table>
     </div>
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Resolved Escalations</div></div>
@@ -1815,6 +1995,9 @@ VIEWS.feedback = async function(content) {
     if (error) return toast(error.message, "error");
     toast("Website visibility updated.", "success"); navigate("feedback");
   }));
+  content.querySelectorAll("[data-del-fb]").forEach(btn => {
+    btn.addEventListener("click", () => confirmSoftDelete("feedback", btn.dataset.delFb, "Feedback", () => navigate("feedback")));
+  });
   content.querySelectorAll("[data-resolve]").forEach(btn => {
     btn.addEventListener("click", () => {
       openModal("Resolve Escalation", `
@@ -1883,6 +2066,7 @@ async function bookingsDuringClosure(c) {
     .gte("slot_time", `${c.start_date}T00:00:00+05:30`)
     .lt("slot_time", `${addDaysISO(c.end_date, 1)}T00:00:00+05:30`)
     .in("status", ["confirmed","pending_doctor_approval","pending_confirmation","reschedule_pending"])
+    .is("deleted_at", null)
     .order("slot_time");
   if (c.doctor_id) q = q.eq("doctor_id", c.doctor_id);
   const { data } = await q;
@@ -2259,13 +2443,13 @@ VIEWS.staff = async function(content) {
   content.innerHTML = `
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Team Members</div><button class="btn btn-primary btn-sm" id="addStaffBtn">+ Add Staff</button></div>
-      <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead>
-      <tbody id="staffTbody"><tr><td colspan="5" class="empty-state">Loading…</td></tr></tbody></table>
+      <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>2FA</th><th></th></tr></thead>
+      <tbody id="staffTbody"><tr><td colspan="6" class="empty-state">Loading…</td></tr></tbody></table>
     </div>`;
   async function load() {
     const { data, error } = await sb.from("staff").select("*").order("created_at");
     const tbody = document.getElementById("staffTbody");
-    if (error) { tbody.innerHTML = `<tr><td colspan="5">Error: ${escapeHtml(error.message)}</td></tr>`; return; }
+    if (error) { tbody.innerHTML = `<tr><td colspan="6">Error: ${escapeHtml(error.message)}</td></tr>`; return; }
     tbody.innerHTML = (data||[]).map(s => `
       <tr>
         <td>${escapeHtml(s.name)}</td>
@@ -2276,11 +2460,17 @@ VIEWS.staff = async function(content) {
           </select>
         </td>
         <td><span class="badge ${s.active?'green':'red'}">${s.active?'Active':'Inactive'}</span></td>
+        <td>
+          <label class="flex gap-8" style="cursor:pointer">
+            <input type="checkbox" data-twofa="${s.id}" data-phone="${escapeHtml(s.phone||'')}" ${s.otp_2fa_enabled?'checked':''} style="width:auto">
+            <span class="badge ${s.otp_2fa_enabled?'green':'grey'}">${s.otp_2fa_enabled?'On':'Off'}</span>
+          </label>
+        </td>
         <td class="flex gap-8">
           ${s.id!==state.staff.id ? `<button class="btn btn-secondary btn-sm" data-toggle="${s.id}" data-active="${s.active}">${s.active?'Deactivate':'Activate'}</button>
           <button class="btn btn-danger btn-sm" data-delete="${s.id}">Delete</button>` : `<span class="muted">You</span>`}
         </td>
-      </tr>`).join("") || `<tr><td colspan="5" class="empty-state">No staff yet.</td></tr>`;
+      </tr>`).join("") || `<tr><td colspan="6" class="empty-state">No staff yet.</td></tr>`;
 
     tbody.querySelectorAll("[data-role]").forEach(sel => sel.addEventListener("change", async () => {
       try { await callAdminFn("update_role", { id: sel.dataset.role, role: sel.value }); toast("Role updated.", "success"); }
@@ -2294,6 +2484,24 @@ VIEWS.staff = async function(content) {
       if (!confirm("Permanently delete this staff login? This cannot be undone.")) return;
       try { await callAdminFn("delete", { id: btn.dataset.delete }); toast("Deleted.", "success"); load(); }
       catch (err) { toast(err.message, "error"); }
+    }));
+    // Works for the admin's own row too, on purpose - an admin must be able
+    // to turn WhatsApp OTP 2FA on for their own login, not just for others.
+    tbody.querySelectorAll("[data-twofa]").forEach(cb => cb.addEventListener("change", async () => {
+      const id = cb.dataset.twofa;
+      if (cb.checked) {
+        const entered = prompt(`WhatsApp phone number to send 2FA codes to${cb.dataset.phone ? ` (currently ${cb.dataset.phone})` : ''}:`, cb.dataset.phone || "");
+        if (!entered || !entered.trim()) { cb.checked = false; return; }
+        try {
+          await callAdminFn("update_2fa", { id, otp_2fa_enabled: true, phone: normalizePhone(entered.trim()) });
+          toast("2FA enabled.", "success"); load();
+        } catch (err) { cb.checked = false; toast(err.message, "error"); }
+      } else {
+        try {
+          await callAdminFn("update_2fa", { id, otp_2fa_enabled: false });
+          toast("2FA disabled.", "success"); load();
+        } catch (err) { cb.checked = true; toast(err.message, "error"); }
+      }
     }));
   }
   await load();
@@ -2426,6 +2634,56 @@ VIEWS.data = async function(content) {
   });
 };
 
+/* ======================================================================
+   TRASH (admin only) — soft-deleted rows across patients, appointments,
+   invoices, payments and feedback. Restoring just clears deleted_at;
+   permanent purge of anything older than 7 days is handled by a separate
+   n8n job, not by this dashboard.
+   ====================================================================== */
+const TRASH_TYPE_LABELS = { patients: "Patient", appointments: "Appointment", invoices: "Invoice", payments: "Payment", feedback: "Feedback" };
+
+VIEWS.trash = async function(content) {
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Trash</div></div>
+      <p class="muted mb-8" style="font-size:12px">Deleted items are kept for 7 days, then permanently and automatically removed. Restore anything that shouldn't have been deleted.</p>
+      <table><thead><tr><th>Type</th><th>Item</th><th>Deleted</th><th>Time Left</th><th></th></tr></thead>
+      <tbody id="trashTbody"><tr><td colspan="5" class="empty-state">Loading…</td></tr></tbody></table>
+    </div>`;
+
+  async function load() {
+    const [pat, appt, inv, pay, fb] = await Promise.all([
+      sb.from("patients").select("id,name,phone,deleted_at").not("deleted_at", "is", null),
+      sb.from("appointments").select("id,slot_time,deleted_at,patient:patients(name)").not("deleted_at", "is", null),
+      sb.from("invoices").select("id,description,amount,deleted_at,patient:patients(name)").not("deleted_at", "is", null),
+      sb.from("payments").select("id,amount,method,deleted_at,patient:patients(name)").not("deleted_at", "is", null),
+      sb.from("feedback").select("id,rating,deleted_at,patient:patients(name)").not("deleted_at", "is", null),
+    ]);
+    const rows = [
+      ...(pat.data || []).map(r => ({ table: "patients", id: r.id, label: r.name || r.phone || "Patient", deleted_at: r.deleted_at })),
+      ...(appt.data || []).map(r => ({ table: "appointments", id: r.id, label: `${fmtDate(r.slot_time)} — ${r.patient?.name || 'Unknown patient'}`, deleted_at: r.deleted_at })),
+      ...(inv.data || []).map(r => ({ table: "invoices", id: r.id, label: `${r.description || 'Invoice'} (${fmtMoney(r.amount)}) — ${r.patient?.name || 'Unknown patient'}`, deleted_at: r.deleted_at })),
+      ...(pay.data || []).map(r => ({ table: "payments", id: r.id, label: `${fmtMoney(r.amount)} via ${r.method || '—'} — ${r.patient?.name || 'Unknown patient'}`, deleted_at: r.deleted_at })),
+      ...(fb.data || []).map(r => ({ table: "feedback", id: r.id, label: `Feedback — ${r.patient?.name || 'Unknown patient'}${r.rating ? ` (${r.rating}★)` : ''}`, deleted_at: r.deleted_at })),
+    ].sort((a, b) => new Date(b.deleted_at) - new Date(a.deleted_at));
+
+    const tbody = document.getElementById("trashTbody");
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td>${TRASH_TYPE_LABELS[r.table]}</td>
+        <td>${escapeHtml(r.label)}</td>
+        <td>${fmtDate(r.deleted_at)}</td>
+        <td>${timeLeftLabel(r.deleted_at)}</td>
+        <td><button class="btn btn-secondary btn-sm" data-restore-table="${r.table}" data-restore-id="${r.id}">Restore</button></td>
+      </tr>`).join("") || `<tr><td colspan="5" class="empty-state">Trash is empty.</td></tr>`;
+
+    tbody.querySelectorAll("[data-restore-id]").forEach(btn => {
+      btn.addEventListener("click", () => restoreFromTrash(btn.dataset.restoreTable, btn.dataset.restoreId, load));
+    });
+  }
+  await load();
+};
+
 /* ---------------------------------------------------------------------
    INIT
    --------------------------------------------------------------------- */
@@ -2433,6 +2691,48 @@ document.getElementById("loginForm").addEventListener("submit", handleLogin);
 document.getElementById("signOutBtn").addEventListener("click", () => handleSignOut());
 document.getElementById("topSignOutBtn").addEventListener("click", () => handleSignOut());
 document.getElementById("changePasswordBtn").addEventListener("click", openChangePasswordModal);
+
+document.getElementById("otpForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const code = document.getElementById("otpCode").value.trim();
+  const btn = document.getElementById("otpVerifyBtn");
+  const errEl = document.getElementById("otpError");
+  errEl.textContent = "";
+  btn.disabled = true; btn.textContent = "Verifying…";
+  try {
+    const result = await call2faFn(EDGE_2FA_VERIFY_URL, { code });
+    if (result && result.ok) {
+      document.getElementById("otpScreen").style.display = "none";
+      enterApp();
+    } else {
+      errEl.textContent = (result && result.message) || "Incorrect code. Please try again.";
+      document.getElementById("otpCode").value = "";
+      document.getElementById("otpCode").focus();
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = "Verify";
+  }
+});
+document.getElementById("otpResendLink").addEventListener("click", async e => {
+  e.preventDefault();
+  const link = e.currentTarget;
+  if (link.dataset.disabled === "true") return;
+  link.dataset.disabled = "true";
+  link.style.opacity = "0.5"; link.style.pointerEvents = "none";
+  const result = await call2faFn(EDGE_2FA_REQUEST_URL, {});
+  if (result && result.error) toast(result.message || "Could not resend code.", "error");
+  else toast("Code resent.", "success");
+  setTimeout(() => { link.dataset.disabled = "false"; link.style.opacity = ""; link.style.pointerEvents = ""; }, 18000);
+});
+document.getElementById("otpCancelLink").addEventListener("click", async e => {
+  e.preventDefault();
+  state.session = null; state.staff = null;
+  document.getElementById("otpScreen").style.display = "none";
+  document.getElementById("loginScreen").style.display = "flex";
+  document.getElementById("loginError").textContent = "";
+  await sb.auth.signOut();
+});
+
 bootstrapSession();
 </script>
 </body>
