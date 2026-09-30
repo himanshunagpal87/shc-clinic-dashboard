@@ -55,7 +55,9 @@
     border-radius:16px; padding:36px 32px;
   }
   .login-logo { display:flex; align-items:center; gap:12px; margin-bottom:24px; }
-  .login-logo .logo-icon { width:42px; height:42px; border-radius:12px; background:linear-gradient(135deg,var(--accent),var(--purple)); display:flex; align-items:center; justify-content:center; font-size:20px; }
+  .logo-badge { background:#fff; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden; }
+  .logo-badge img { width:100%; height:100%; object-fit:contain; display:block; }
+  .login-logo .logo-badge { width:60px; height:60px; padding:5px; border-radius:14px; }
   .login-logo .logo-text { font-family:'Space Grotesk',sans-serif; font-size:18px; font-weight:700; }
   .login-logo .logo-sub { font-size:11px; color:var(--text-muted); }
   .field { margin-bottom:16px; }
@@ -93,7 +95,7 @@
     transition:width .18s ease, transform .2s ease;
   }
   .sidebar-logo { padding:22px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
-  .sidebar-logo .logo-icon { width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg,var(--accent),var(--purple)); display:flex; align-items:center; justify-content:center; font-size:17px; flex-shrink:0; }
+  .sidebar-logo .logo-badge { width:36px; height:36px; }
   .sidebar-logo .logo-text { font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:700; line-height:1.2; }
   .sidebar-logo .logo-sub { font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px; }
   .sidebar-nav { flex:1; overflow-y:auto; padding:14px 10px; }
@@ -235,7 +237,7 @@
 <div id="loginScreen">
   <div class="login-card">
     <div class="login-logo">
-      <div class="logo-icon">🏥</div>
+      <div class="logo-badge"><img src="assets/logo.png" alt="Shivwik Holistic Care"></div>
       <div>
         <div class="logo-text">Shivwik Holistic Care</div>
         <div class="logo-sub">Clinic Dashboard</div>
@@ -263,7 +265,7 @@
 <div id="otpScreen" style="display:none">
   <div class="login-card">
     <div class="login-logo">
-      <div class="logo-icon">🏥</div>
+      <div class="logo-badge"><img src="assets/logo.png" alt="Shivwik Holistic Care"></div>
       <div>
         <div class="logo-text">Shivwik Holistic Care</div>
         <div class="logo-sub">Clinic Dashboard</div>
@@ -290,7 +292,7 @@
   <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
   <div class="sidebar" id="sidebar">
     <div class="sidebar-logo">
-      <div class="logo-icon">🏥</div>
+      <div class="logo-badge"><img src="assets/logo.png" alt="Shivwik Holistic Care"></div>
       <div class="logo-words">
         <div class="logo-text">Shivwik Holistic</div>
         <div class="logo-sub">Care Dashboard</div>
@@ -611,11 +613,12 @@ function wirePatientCombobox(root, patients) {
         hidden.value = item.dataset.id;
         input.value = item.dataset.label;
         list.hidden = true;
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
       });
     });
   }
   input.addEventListener('focus', () => render(input.value));
-  input.addEventListener('input', () => { hidden.value = ''; render(input.value); });
+  input.addEventListener('input', () => { hidden.value = ''; render(input.value); hidden.dispatchEvent(new Event('change', { bubbles: true })); });
   input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; }, 150));
 }
 
@@ -993,6 +996,9 @@ function statusBadge(status) {
   };
   return `<span class="badge ${map[status]||'grey'}">${escapeHtml((status||'').replace(/_/g,' '))}</span>`;
 }
+const APPT_STATUSES = ["confirmed","completed","cancelled","declined","missed","pending_doctor_approval","reschedule_pending","pending_confirmation"];
+const APPT_TYPES = { clinic: "Clinic", video: "Video", home: "Home Visit" };
+function apptTypeLabel(t) { return APPT_TYPES[t] || APPT_TYPES.clinic; }
 
 /* ======================================================================
    PATIENTS
@@ -1445,16 +1451,25 @@ VIEWS.patientProfile = async function(content) {
       if (addSessionBtn) addSessionBtn.addEventListener("click", () => openSessionNoteForm(protocols.data[0]?.id));
       body.querySelectorAll("[data-add-session]").forEach(btn => btn.addEventListener("click", () => openSessionNoteForm(btn.dataset.addSession)));
     } else if (tab === "Appointments") {
-      const { data } = await sb.from("appointments").select("*, doctor:doctors(name)").eq("patient_id", id).is("deleted_at", null).order("slot_time",{ascending:false});
+      const { data } = await sb.from("appointments").select("*, doctor:doctors(name), patient:patients(name,phone)").eq("patient_id", id).is("deleted_at", null).order("slot_time",{ascending:false});
       body.innerHTML = `
         <div class="panel">
-          <table><thead><tr><th>When</th><th>Doctor</th><th>Status</th><th>Calendar</th><th></th></tr></thead>
+          <table><thead><tr><th>When</th><th>Doctor</th><th>Type</th><th>Status</th><th>Calendar</th><th></th></tr></thead>
           <tbody>${(data||[]).map(a=>`<tr>
-            <td>${fmtDate(a.slot_time)}</td><td>${escapeHtml(a.doctor?.name||'—')}</td><td>${statusBadge(a.status)}</td>
+            <td>${fmtDate(a.slot_time)}</td><td>${escapeHtml(a.doctor?.name||'—')}</td><td>${apptTypeLabel(a.appointment_type)}</td><td>${statusBadge(a.status)}</td>
             <td>${a.google_event_id ? '<span class="badge green">Synced</span>' : '<span class="badge grey">Pending</span>'}</td>
-            <td>${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-appt="${a.id}">Delete</button>` : ``}</td>
-          </tr>`).join("")||`<tr><td colspan="5" class="empty-state">No appointments yet.</td></tr>`}</tbody></table>
+            <td class="flex gap-8">
+              ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" data-editid="${a.id}">Edit</button>` : ``}
+              ${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-appt="${a.id}">Delete</button>` : ``}
+            </td>
+          </tr>`).join("")||`<tr><td colspan="6" class="empty-state">No appointments yet.</td></tr>`}</tbody></table>
         </div>`;
+      body.querySelectorAll("[data-editid]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const appt = (data||[]).find(x => x.id === btn.dataset.editid);
+          if (appt) openEditAppointmentForm(appt, () => renderTab("Appointments"));
+        });
+      });
       body.querySelectorAll("[data-del-appt]").forEach(btn => {
         btn.addEventListener("click", () => confirmSoftDelete("appointments", btn.dataset.delAppt, "Appointment", () => renderTab("Appointments")));
       });
@@ -1502,57 +1517,82 @@ VIEWS.patientProfile = async function(content) {
    APPOINTMENTS
    ====================================================================== */
 VIEWS.appointments = async function(content) {
+  const canManage = can("admin","doctor","reception","front_office");
+  const { data: patientsForFilter } = await sb.from("patients").select("id,name,phone").is("deleted_at", null).order("name");
   content.innerHTML = `
     <div class="panel">
-      <div class="panel-head">
-        <div class="flex gap-8">
-          <select id="statusFilter">
-            <option value="">All statuses</option>
-            <option value="confirmed">Confirmed</option>
-            <option value="pending_doctor_approval">Pending Doctor Approval</option>
-            <option value="pending_confirmation">Pending Confirmation (Overlap)</option>
-            <option value="completed">Completed</option>
-            <option value="cancelled">Cancelled</option>
-            <option value="missed">Missed</option>
-            <option value="declined">Declined</option>
-          </select>
+      <div class="panel-head" style="align-items:flex-end">
+        <div class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+          <div class="field" style="margin-bottom:0;min-width:135px"><label>From</label><input type="date" id="apptDateFrom"></div>
+          <div class="field" style="margin-bottom:0;min-width:135px"><label>To</label><input type="date" id="apptDateTo"></div>
+          <div class="field" style="margin-bottom:0;min-width:170px">
+            <label>Status</label>
+            <select id="statusFilter">
+              <option value="">All statuses</option>
+              ${APPT_STATUSES.map(s=>`<option value="${s}">${escapeHtml(s.replace(/_/g,' '))}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:0;min-width:130px">
+            <label>Type</label>
+            <select id="typeFilter">
+              <option value="">All types</option>
+              ${Object.keys(APPT_TYPES).map(t=>`<option value="${t}">${APPT_TYPES[t]}</option>`).join("")}
+            </select>
+          </div>
+          <div style="margin-bottom:0;min-width:220px">${patientComboboxHtml(patientsForFilter||[], { label: "Patient", required: false })}</div>
+          <button type="button" class="btn btn-secondary btn-sm" id="clearApptFiltersBtn">Clear filters</button>
         </div>
-        ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-primary btn-sm" id="addApptBtn">+ New Appointment</button>` : ``}
+        ${canManage ? `<button class="btn btn-primary btn-sm" id="addApptBtn">+ New Appointment</button>` : ``}
       </div>
-      <table><thead><tr><th>When</th><th>Patient</th><th>Doctor</th><th>Service</th><th>Status</th><th>Calendar</th><th></th></tr></thead>
-      <tbody id="apptTbody"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody></table>
+      <table><thead><tr><th>When</th><th>Patient</th><th>Doctor</th><th>Service</th><th>Type</th><th>Status</th><th>Calendar</th><th></th></tr></thead>
+      <tbody id="apptTbody"><tr><td colspan="8" class="empty-state">Loading…</td></tr></tbody></table>
     </div>`;
+  wirePatientCombobox(content, patientsForFilter||[]);
 
-  async function load(status) {
+  const filters = { status: "", type: "", patientId: "", dateFrom: "", dateTo: "" };
+
+  async function load() {
     let q = sb.from("appointments").select("*, patient:patients(name,phone), doctor:doctors(name), service:services(name)").is("deleted_at", null).order("slot_time",{ascending:false}).limit(200);
-    if (status) q = q.eq("status", status);
+    if (filters.status) q = q.eq("status", filters.status);
+    if (filters.type) q = q.eq("appointment_type", filters.type);
+    if (filters.patientId) q = q.eq("patient_id", filters.patientId);
+    if (filters.dateFrom) q = q.gte("slot_time", new Date(filters.dateFrom + "T00:00:00").toISOString());
+    if (filters.dateTo) q = q.lte("slot_time", new Date(filters.dateTo + "T23:59:59.999").toISOString());
     const { data, error } = await q;
     const tbody = document.getElementById("apptTbody");
-    if (error) { tbody.innerHTML = `<tr><td colspan="7">Error: ${escapeHtml(error.message)}</td></tr>`; return; }
+    if (error) { tbody.innerHTML = `<tr><td colspan="8">Error: ${escapeHtml(error.message)}</td></tr>`; return; }
     tbody.innerHTML = (data||[]).map(a => `
       <tr>
         <td>${fmtDate(a.slot_time)}</td>
         <td>${escapeHtml(a.patient?.name||'—')}<div class="muted" style="font-size:11px">${escapeHtml(a.patient?.phone||'')}</div></td>
         <td>${escapeHtml(a.doctor?.name||'—')}</td>
         <td>${escapeHtml(a.service?.name||'—')}</td>
+        <td>${apptTypeLabel(a.appointment_type)}</td>
         <td>${statusBadge(a.status)}</td>
         <td>${a.google_event_id ? '<span class="badge green">Synced</span>' : '<span class="badge grey">Pending</span>'}</td>
         <td>
           <div class="flex gap-8">
-            ${can("admin","doctor","reception","front_office") ? `<select data-id="${a.id}" class="statusSelect">
+            ${canManage ? `<select data-id="${a.id}" class="statusSelect">
               ${["confirmed","completed","cancelled","missed"].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
             </select>` : ``}
-            ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" data-msgid="${a.id}">Message</button>` : ``}
+            ${canManage ? `<button class="btn btn-secondary btn-sm" data-editid="${a.id}">Edit</button>` : ``}
+            ${canManage ? `<button class="btn btn-secondary btn-sm" data-msgid="${a.id}">Message</button>` : ``}
             ${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-appt="${a.id}">Delete</button>` : ``}
           </div>
         </td>
-      </tr>`).join("") || `<tr><td colspan="7" class="empty-state">No appointments found.</td></tr>`;
+      </tr>`).join("") || `<tr><td colspan="8" class="empty-state">No appointments found.</td></tr>`;
     tbody.querySelectorAll(".statusSelect").forEach(sel => {
       sel.addEventListener("change", async () => {
         const payload = { status: sel.value };
         if (sel.value === "completed") payload.completed_at = new Date().toISOString();
         const { error } = await sb.from("appointments").update(payload).eq("id", sel.dataset.id);
         if (error) toast(error.message, "error"); else toast("Status updated.", "success");
+      });
+    });
+    tbody.querySelectorAll("[data-editid]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const appt = (data||[]).find(x => x.id === btn.dataset.editid);
+        if (appt) openEditAppointmentForm(appt, load);
       });
     });
     tbody.querySelectorAll("[data-msgid]").forEach(btn => {
@@ -1566,13 +1606,25 @@ VIEWS.appointments = async function(content) {
       });
     });
     tbody.querySelectorAll("[data-del-appt]").forEach(btn => {
-      btn.addEventListener("click", () => confirmSoftDelete("appointments", btn.dataset.delAppt, "Appointment", () => load(status)));
+      btn.addEventListener("click", () => confirmSoftDelete("appointments", btn.dataset.delAppt, "Appointment", load));
     });
   }
-  await load("");
-  document.getElementById("statusFilter").addEventListener("change", e => load(e.target.value));
+  await load();
+  document.getElementById("apptDateFrom").addEventListener("change", e => { filters.dateFrom = e.target.value; load(); });
+  document.getElementById("apptDateTo").addEventListener("change", e => { filters.dateTo = e.target.value; load(); });
+  document.getElementById("statusFilter").addEventListener("change", e => { filters.status = e.target.value; load(); });
+  document.getElementById("typeFilter").addEventListener("change", e => { filters.type = e.target.value; load(); });
+  content.querySelector('[data-combobox] input[type="hidden"]').addEventListener("change", e => { filters.patientId = e.target.value; load(); });
+  document.getElementById("clearApptFiltersBtn").addEventListener("click", () => {
+    filters.status = ""; filters.type = ""; filters.patientId = ""; filters.dateFrom = ""; filters.dateTo = "";
+    document.getElementById("apptDateFrom").value = ""; document.getElementById("apptDateTo").value = "";
+    document.getElementById("statusFilter").value = ""; document.getElementById("typeFilter").value = "";
+    const combo = content.querySelector('[data-combobox]');
+    combo.querySelector('.combobox-input').value = ""; combo.querySelector('input[type="hidden"]').value = "";
+    load();
+  });
   const addBtn = document.getElementById("addApptBtn");
-  if (addBtn) addBtn.addEventListener("click", () => openAppointmentForm(() => load(document.getElementById("statusFilter").value)));
+  if (addBtn) addBtn.addEventListener("click", () => openAppointmentForm(load));
 };
 
 async function openAppointmentForm(onSaved) {
@@ -1593,7 +1645,7 @@ async function openAppointmentForm(onSaved) {
       <div class="field mb-8"><label>Date &amp; Time *</label><input name="slot_time" type="datetime-local" required></div>
       <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Book</button></div>
     </form>`);
-  wirePatientCombobox(document, patients||[]);
+  wirePatientCombobox(document.getElementById("modalBody"), patients||[]);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("apptForm").addEventListener("submit", async e => {
     e.preventDefault();
@@ -1613,6 +1665,54 @@ async function openAppointmentForm(onSaved) {
     const { error } = await sb.from("appointments").insert(payload);
     if (error) return toast(error.message, "error");
     closeModal(); toast("Appointment booked.", "success"); onSaved && onSaved();
+  });
+}
+
+/* Edit an existing appointment - clerical correction only (time, doctor,
+   service, status, type, home visit address). Patient is never reassigned. */
+async function openEditAppointmentForm(appt, onSaved) {
+  const [{ data: doctors }, { data: services }] = await Promise.all([
+    sb.from("doctors").select("id,name").eq("is_active", true).order("name"),
+    sb.from("services").select("id,name,specialty").eq("is_active", true).order("specialty").order("name"),
+  ]);
+  const currentType = appt.appointment_type || "clinic";
+  openModal("Edit Appointment", `
+    <form id="editApptForm">
+      <div class="field mb-8"><label>Patient</label><input value="${escapeHtml(appt.patient?.name||'—')}${appt.patient?.phone ? ' — '+escapeHtml(appt.patient.phone) : ''}" disabled></div>
+      <div class="field mb-8"><label>Doctor</label>
+        <select name="doctor_id"><option value="">—</option>${(doctors||[]).map(d=>`<option value="${d.id}" ${appt.doctor_id===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join("")}</select>
+      </div>
+      <div class="field mb-8"><label>Service</label>
+        <select name="service_id"><option value="">—</option>${(services||[]).map(s=>`<option value="${s.id}" ${appt.service_id===s.id?'selected':''}>${escapeHtml(s.specialty)} — ${escapeHtml(s.name)}</option>`).join("")}</select>
+      </div>
+      <div class="field mb-8"><label>Date &amp; Time *</label><input name="slot_time" type="datetime-local" required value="${toLocalInput(appt.slot_time)}"></div>
+      <div class="field mb-8"><label>Status</label>
+        <select name="status">${APPT_STATUSES.map(s=>`<option value="${s}" ${appt.status===s?'selected':''}>${escapeHtml(s.replace(/_/g,' '))}</option>`).join("")}</select>
+      </div>
+      <div class="field mb-8"><label>Type</label>
+        <select name="appointment_type" id="editApptType">${Object.keys(APPT_TYPES).map(t=>`<option value="${t}" ${currentType===t?'selected':''}>${APPT_TYPES[t]}</option>`).join("")}</select>
+      </div>
+      <div class="field mb-8" id="homeAddressField" style="${currentType==='home'?'':'display:none'}">
+        <label>Home Visit Address</label>
+        <textarea name="home_visit_address" rows="2">${escapeHtml(appt.home_visit_address||'')}</textarea>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Save Changes</button></div>
+    </form>`);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  document.getElementById("editApptType").addEventListener("change", e => {
+    document.getElementById("homeAddressField").style.display = e.target.value === "home" ? "" : "none";
+  });
+  document.getElementById("editApptForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const payload = Object.fromEntries(new FormData(e.target).entries());
+    payload.doctor_id = payload.doctor_id || null;
+    payload.service_id = payload.service_id || null;
+    payload.slot_time = new Date(payload.slot_time).toISOString();
+    if (payload.appointment_type !== "home") payload.home_visit_address = null;
+    if (payload.status === "completed" && appt.status !== "completed") payload.completed_at = new Date().toISOString();
+    const { error } = await sb.from("appointments").update(payload).eq("id", appt.id);
+    if (error) return toast(error.message, "error");
+    closeModal(); toast("Appointment updated.", "success"); onSaved && onSaved();
   });
 }
 
@@ -1654,7 +1754,7 @@ VIEWS.clinical = async function(content) {
         <div class="field mb-8"><label>Prognosis</label><textarea name="prognosis" rows="2" placeholder="Expected outcome / recovery trajectory"></textarea></div>
         <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
       </form>`);
-    wirePatientCombobox(document, patients||[]);
+    wirePatientCombobox(document.getElementById("modalBody"), patients||[]);
     document.getElementById("cancelBtn").addEventListener("click", closeModal);
     document.getElementById("quickProtoForm").addEventListener("submit", async e => {
       e.preventDefault();
@@ -1909,7 +2009,7 @@ function openInvoiceFormGeneric(patients, onSaved) {
       </div>
       <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Create</button></div>
     </form>`);
-  wirePatientCombobox(document, patients);
+  wirePatientCombobox(document.getElementById("modalBody"), patients);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("invForm").addEventListener("submit", async e => {
     e.preventDefault();
