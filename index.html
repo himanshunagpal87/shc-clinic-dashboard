@@ -43,17 +43,21 @@
   ::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
 
   /* ---------- LOGIN ---------- */
-  #loginScreen {
+  #loginScreen, #otpScreen {
     position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
     background:radial-gradient(circle at 30% 20%, rgba(20,184,166,0.12), transparent 45%), var(--bg);
     z-index:500;
   }
+  #otpCode { letter-spacing:6px; font-size:20px; text-align:center; font-family:'Space Grotesk',sans-serif; }
+  #otpError { color:var(--red); font-size:12.5px; margin-top:10px; min-height:16px; }
   .login-card {
     width:380px; max-width:92vw; background:var(--surface); border:1px solid var(--border);
     border-radius:16px; padding:36px 32px;
   }
   .login-logo { display:flex; align-items:center; gap:12px; margin-bottom:24px; }
-  .login-logo .logo-icon { width:42px; height:42px; border-radius:12px; background:linear-gradient(135deg,var(--accent),var(--purple)); display:flex; align-items:center; justify-content:center; font-size:20px; }
+  .logo-badge { background:#fff; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden; }
+  .logo-badge img { width:100%; height:100%; object-fit:contain; display:block; }
+  .login-logo .logo-badge { width:60px; height:60px; padding:5px; border-radius:14px; }
   .login-logo .logo-text { font-family:'Space Grotesk',sans-serif; font-size:18px; font-weight:700; }
   .login-logo .logo-sub { font-size:11px; color:var(--text-muted); }
   .field { margin-bottom:16px; }
@@ -63,6 +67,15 @@
     padding:10px 12px; color:var(--text); font-size:13.5px; font-family:inherit;
   }
   .field input:focus, .field select:focus, .field textarea:focus { outline:none; border-color:var(--accent); }
+  .field-error { color:var(--red); font-size:11px; margin-top:4px; min-height:14px; }
+  .field-hint { color:var(--text-muted); font-size:11px; margin-top:4px; }
+  .field input.has-error { border-color:var(--red); }
+  .field input.is-approx { border-style:dashed; border-color:var(--yellow); }
+  .combobox { position:relative; }
+  .combobox-list { position:absolute; top:100%; left:0; right:0; background:var(--card); border:1px solid var(--border); border-radius:8px; max-height:220px; overflow-y:auto; z-index:50; margin-top:4px; box-shadow:0 8px 24px rgba(0,0,0,0.35); }
+  .combobox-item { padding:8px 12px; font-size:13px; cursor:pointer; }
+  .combobox-item:hover, .combobox-item.active { background:var(--card-hover); }
+  .combobox-empty { padding:8px 12px; font-size:12px; color:var(--text-muted); }
   .btn { padding:10px 18px; border-radius:8px; border:none; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:.15s; }
   .btn-primary { background:var(--accent); color:#04231f; width:100%; justify-content:center; }
   .btn-primary:hover { background:var(--accent-light); }
@@ -82,7 +95,7 @@
     transition:width .18s ease, transform .2s ease;
   }
   .sidebar-logo { padding:22px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
-  .sidebar-logo .logo-icon { width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg,var(--accent),var(--purple)); display:flex; align-items:center; justify-content:center; font-size:17px; flex-shrink:0; }
+  .sidebar-logo .logo-badge { width:36px; height:36px; }
   .sidebar-logo .logo-text { font-family:'Space Grotesk',sans-serif; font-size:15px; font-weight:700; line-height:1.2; }
   .sidebar-logo .logo-sub { font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px; }
   .sidebar-nav { flex:1; overflow-y:auto; padding:14px 10px; }
@@ -224,7 +237,7 @@
 <div id="loginScreen">
   <div class="login-card">
     <div class="login-logo">
-      <div class="logo-icon">🏥</div>
+      <div class="logo-badge"><img src="assets/logo.png" alt="Shivwik Holistic Care"></div>
       <div>
         <div class="logo-text">Shivwik Holistic Care</div>
         <div class="logo-sub">Clinic Dashboard</div>
@@ -248,12 +261,38 @@
   </div>
 </div>
 
+<!-- ===================== 2FA (WhatsApp OTP) ===================== -->
+<div id="otpScreen" style="display:none">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-badge"><img src="assets/logo.png" alt="Shivwik Holistic Care"></div>
+      <div>
+        <div class="logo-text">Shivwik Holistic Care</div>
+        <div class="logo-sub">Clinic Dashboard</div>
+      </div>
+    </div>
+    <p id="otpIntro" style="font-size:13px;color:var(--text-soft);margin-bottom:16px">A verification code has been sent to your WhatsApp. Enter the 6-digit code below.</p>
+    <form id="otpForm">
+      <div class="field">
+        <label>6-digit code</label>
+        <input type="text" id="otpCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="123456" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="otpVerifyBtn">Verify</button>
+      <div id="otpError"></div>
+    </form>
+    <p style="font-size:11.5px;margin-top:16px;display:flex;justify-content:space-between;">
+      <a href="#" id="otpResendLink">Resend code</a>
+      <a href="#" id="otpCancelLink" style="color:var(--text-muted)">Cancel &amp; sign out</a>
+    </p>
+  </div>
+</div>
+
 <!-- ===================== APP ===================== -->
 <div id="app">
   <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
   <div class="sidebar" id="sidebar">
     <div class="sidebar-logo">
-      <div class="logo-icon">🏥</div>
+      <div class="logo-badge"><img src="assets/logo.png" alt="Shivwik Holistic Care"></div>
       <div class="logo-words">
         <div class="logo-text">Shivwik Holistic</div>
         <div class="logo-sub">Care Dashboard</div>
@@ -298,6 +337,8 @@
 const SUPABASE_URL = "https://ycxuipirpyjadkavkcrf.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_kOEXCSZkqQMV0MJ8kaa1Gw_v_QaPTdm";
 const EDGE_FUNCTION_URL = SUPABASE_URL + "/functions/v1/admin-manage-staff";
+const EDGE_2FA_REQUEST_URL = SUPABASE_URL + "/functions/v1/staff-2fa-request";
+const EDGE_2FA_VERIFY_URL = SUPABASE_URL + "/functions/v1/staff-2fa-verify";
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -330,6 +371,7 @@ const NAV_ITEMS = [
   { key: "articles", label: "Website Articles", icon: "📝", roles: ["admin","doctor","marketing"] },
   { key: "staff", label: "Staff & Users", icon: "🔑", roles: ["admin"] },
   { key: "data", label: "Import / Export / Backup", icon: "🗂️", roles: ["admin"] },
+  { key: "trash", label: "Trash", icon: "🗑️", roles: ["admin"] },
 ];
 
 /* ---------------------------------------------------------------------
@@ -348,6 +390,46 @@ function normalizePhone(raw) {
   if (digits.length === 11 && digits.startsWith("0")) return "91" + digits.slice(1);
   if (digits.length === 12 && digits.startsWith("91")) return digits;
   return digits; // anything unusual (foreign number, partial entry) - leave visible, don't guess
+}
+// dd/mm/yyyy <-> ISO (yyyy-mm-dd) helpers for the DOB field. Only ISO ever
+// reaches Supabase; dd/mm/yyyy is purely the staff-facing display format.
+function isValidDMY(str) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(str||'').trim());
+  if (!m) return false;
+  const day = Number(m[1]), month = Number(m[2]), year = Number(m[3]);
+  if (month < 1 || month > 12 || year < 1900) return false;
+  const dt = new Date(year, month - 1, day);
+  if (dt.getFullYear() !== year || dt.getMonth() !== month - 1 || dt.getDate() !== day) return false; // rejects e.g. 31/02/2020
+  const today = new Date(); today.setHours(23,59,59,999);
+  if (dt > today) return false; // no future DOBs
+  return true;
+}
+function dmyToISO(str) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(str||'').trim());
+  if (!m) return null;
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+function isoToDMY(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||''));
+  if (!m) return "";
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+function computeAgeFromISO(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||''));
+  if (!m) return "";
+  const dob = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const md = today.getMonth() - dob.getMonth();
+  if (md < 0 || (md === 0 && today.getDate() < dob.getDate())) age--;
+  return age >= 0 ? age : "";
+}
+// Approximate DOB from an age only: 1 Jan of (this year - age). Callers must
+// mark the field as approximate in the UI - this is never exact.
+function approxDMYFromAge(age) {
+  const n = Number(age);
+  if (!Number.isFinite(n) || n < 0 || n > 130) return "";
+  return `01/01/${new Date().getFullYear() - Math.floor(n)}`;
 }
 function fmtDate(d) {
   if (!d) return "—";
@@ -380,6 +462,50 @@ function toast(msg, type) {
   setTimeout(() => el.remove(), 4500);
 }
 function can(...roles) { return state.staff && roles.includes(state.staff.role); }
+
+/* ---------------------------------------------------------------------
+   SOFT DELETE / TRASH (admin only)
+   Every delete from the dashboard is a soft delete: it sets deleted_at
+   on the row and nothing more. A separate n8n job permanently purges rows
+   whose deleted_at is more than 7 days old - the dashboard never issues a
+   real SQL DELETE against these tables (see confirmSoftDelete below).
+   --------------------------------------------------------------------- */
+const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+function timeLeftLabel(deletedAt) {
+  const purgeAt = new Date(deletedAt).getTime() + TRASH_RETENTION_MS;
+  const msLeft = purgeAt - Date.now();
+  if (!isFinite(msLeft) || msLeft <= 0) return "Purging soon";
+  const daysLeft = Math.floor(msLeft / (24*60*60*1000));
+  if (daysLeft >= 1) return `${daysLeft} day${daysLeft===1?'':'s'} left`;
+  const hoursLeft = Math.max(1, Math.round(msLeft / (60*60*1000)));
+  return `${hoursLeft} hour${hoursLeft===1?'':'s'} left`;
+}
+async function confirmSoftDelete(table, id, entityLabel, onDone) {
+  if (!can("admin")) return;
+  if (!confirm("This will move it to Trash. It can be restored within 7 days, after which it's permanently removed.")) return;
+  const { error } = await sb.from(table).update({ deleted_at: new Date().toISOString() }).eq("id", id);
+  if (error) return toast(error.message, "error");
+  toast(`${entityLabel} moved to Trash.`, "success");
+  onDone && onDone();
+}
+async function restoreFromTrash(table, id, onDone) {
+  const { error } = await sb.from(table).update({ deleted_at: null }).eq("id", id);
+  if (error) return toast(error.message, "error");
+  toast("Restored.", "success");
+  onDone && onDone();
+}
+/* Direct, immediate, permanent single-field clear (admin only) - distinct
+   from soft delete: no Trash, no restore, the confirm dialog IS the safety
+   net. Used on the patient edit form for email/notes/address/emergency
+   contact fields. */
+async function confirmClearField(table, id, field, fieldLabel, onCleared) {
+  if (!can("admin")) return;
+  if (!confirm(`Clear the '${fieldLabel}' field? This cannot be undone.`)) return;
+  const { error } = await sb.from(table).update({ [field]: null }).eq("id", id);
+  if (error) return toast(error.message, "error");
+  toast(`Cleared ${fieldLabel}.`, "success");
+  onCleared && onCleared();
+}
 function downloadFile(filename, content, mime) {
   const blob = new Blob([content], { type: mime || "application/octet-stream" });
   const url = URL.createObjectURL(blob);
@@ -445,6 +571,58 @@ function openModal(title, bodyHtml, opts) {
 function closeModal() { document.getElementById("modalRoot").innerHTML = ""; }
 
 /* ---------------------------------------------------------------------
+   SEARCHABLE PATIENT COMBOBOX
+   Markup: patientComboboxHtml() renders a text input + hidden `patient_id`
+   input, matching the field name every existing patient <select> used - so
+   the rest of the form code (FormData -> payload.patient_id) is untouched.
+   wirePatientCombobox() must be called once the markup is in the DOM.
+   --------------------------------------------------------------------- */
+function patientComboboxHtml(patients, opts) {
+  opts = opts || {};
+  const label = opts.label || "Patient *";
+  return `
+    <div class="field combobox" data-combobox>
+      <label>${escapeHtml(label)}</label>
+      <input type="text" class="combobox-input" placeholder="Search by name or phone…" autocomplete="off" ${opts.required !== false ? 'required' : ''}>
+      <input type="hidden" name="${opts.name || 'patient_id'}">
+      <div class="combobox-list" hidden></div>
+    </div>`;
+}
+function wirePatientCombobox(root, patients) {
+  const wrap = root.querySelector('[data-combobox]');
+  if (!wrap) return;
+  const input = wrap.querySelector('.combobox-input');
+  const hidden = wrap.querySelector('input[type="hidden"]');
+  const list = wrap.querySelector('.combobox-list');
+  const normPhone = s => String(s||'').replace(/[\s-]/g, '');
+  function render(term) {
+    const t = term.trim().toLowerCase();
+    const tDigits = normPhone(term).replace(/\D/g,'');
+    const matches = !t ? patients : patients.filter(p => {
+      const name = (p.name||'').toLowerCase();
+      const phone = normPhone(p.phone||'');
+      return name.includes(t) || (tDigits && phone.includes(tDigits));
+    });
+    list.innerHTML = matches.slice(0, 50).map(p =>
+      `<div class="combobox-item" data-id="${p.id}" data-label="${escapeHtml(p.name)} — ${escapeHtml(p.phone||'')}">${escapeHtml(p.name)} <span class="muted">${escapeHtml(p.phone||'')}</span></div>`
+    ).join("") || `<div class="combobox-empty">No matching patients</div>`;
+    list.hidden = false;
+    list.querySelectorAll('.combobox-item').forEach(item => {
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        hidden.value = item.dataset.id;
+        input.value = item.dataset.label;
+        list.hidden = true;
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
+  }
+  input.addEventListener('focus', () => render(input.value));
+  input.addEventListener('input', () => { hidden.value = ''; render(input.value); hidden.dispatchEvent(new Event('change', { bubbles: true })); });
+  input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; }, 150));
+}
+
+/* ---------------------------------------------------------------------
    AUTH
    --------------------------------------------------------------------- */
 async function loadStaffProfile(userId) {
@@ -477,12 +655,53 @@ async function handleLogin(e) {
     state.staff = profile;
     storeSet(SIGNED_IN_AT_KEY, Date.now());
     markActivity(true);
-    enterApp();
+
+    const twofa = await call2faFn(EDGE_2FA_REQUEST_URL, {});
+    if (twofa && twofa.error) {
+      state.session = null; state.staff = null;
+      await sb.auth.signOut();
+      throw new Error(twofa.message || "This account could not be verified for sign-in. Contact your clinic admin.");
+    }
+    if (twofa && twofa.required) {
+      showOtpScreen();
+    } else {
+      enterApp();
+    }
   } catch (err) {
     errEl.textContent = err.message || "Sign-in failed.";
   } finally {
     btn.disabled = false; btn.textContent = "Sign In";
   }
+}
+
+/* ---------------------------------------------------------------------
+   2FA (WhatsApp OTP) — staff-2fa-request / staff-2fa-verify Edge Functions,
+   same auth header pattern as callAdminFn/admin-manage-staff below.
+   --------------------------------------------------------------------- */
+async function call2faFn(url, payload) {
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + session.access_token,
+        "apikey": SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify(payload || {}),
+    });
+    return await res.json();
+  } catch (err) {
+    return { error: "network", message: err.message || "Could not reach the verification service. Check your connection and try again." };
+  }
+}
+function showOtpScreen() {
+  document.getElementById("loginScreen").style.display = "none";
+  document.getElementById("otpScreen").style.display = "flex";
+  document.getElementById("otpError").textContent = "";
+  const codeInput = document.getElementById("otpCode");
+  codeInput.value = "";
+  codeInput.focus();
 }
 
 async function handleSignOut(reason) {
@@ -706,6 +925,7 @@ const PAGE_META = {
   articles: ["Website Articles", "Write, review and schedule articles for shivwikholisticcare.com"],
   staff: ["Staff & Users", "Manage dashboard logins and roles"],
   data: ["Import / Export / Backup", "Bulk data tools"],
+  trash: ["Trash", "Deleted records — restore within 7 days, then permanently purged"],
   patientProfile: ["Patient", ""],
 };
 
@@ -736,12 +956,12 @@ VIEWS.home = async function(content) {
   const [apptsToday, upcoming, openEsc, feedbackRecent, invoicesOpen] = await Promise.all([
     sb.from("appointments").select("id", { count: "exact", head: true })
       .gte("slot_time", todayStart.toISOString()).lte("slot_time", todayEnd.toISOString())
-      .in("status", ["confirmed","completed"]),
+      .in("status", ["confirmed","completed"]).is("deleted_at", null),
     sb.from("appointments").select("id, slot_time, status, patient:patients(name,phone), doctor:doctors(name)")
-      .gte("slot_time", new Date().toISOString()).order("slot_time", { ascending: true }).limit(8),
+      .gte("slot_time", new Date().toISOString()).is("deleted_at", null).order("slot_time", { ascending: true }).limit(8),
     can("admin","doctor") ? sb.from("escalations").select("id", { count: "exact", head: true }).eq("resolved", false) : Promise.resolve({count:0}),
-    can("admin","doctor") ? sb.from("feedback").select("rating").not("rating","is",null).order("requested_at",{ascending:false}).limit(50) : Promise.resolve({data:[]}),
-    can("admin","billing","front_office") ? sb.from("invoices").select("amount", { count: "exact" }).in("status", ["unpaid","partial"]) : Promise.resolve({data:[],count:0}),
+    can("admin","doctor") ? sb.from("feedback").select("rating").not("rating","is",null).is("deleted_at", null).order("requested_at",{ascending:false}).limit(50) : Promise.resolve({data:[]}),
+    can("admin","billing","front_office") ? sb.from("invoices").select("amount", { count: "exact" }).in("status", ["unpaid","partial"]).is("deleted_at", null) : Promise.resolve({data:[],count:0}),
   ]);
 
   const ratings = (feedbackRecent.data||[]).map(f=>f.rating).filter(r=>r!=null);
@@ -776,6 +996,9 @@ function statusBadge(status) {
   };
   return `<span class="badge ${map[status]||'grey'}">${escapeHtml((status||'').replace(/_/g,' '))}</span>`;
 }
+const APPT_STATUSES = ["confirmed","completed","cancelled","declined","missed","pending_doctor_approval","reschedule_pending","pending_confirmation"];
+const APPT_TYPES = { clinic: "Clinic", video: "Video", home: "Home Visit" };
+function apptTypeLabel(t) { return APPT_TYPES[t] || APPT_TYPES.clinic; }
 
 /* ======================================================================
    PATIENTS
@@ -792,7 +1015,7 @@ VIEWS.patients = async function(content) {
     </div>`;
 
   async function load(term) {
-    let q = sb.from("patients").select("*").order("created_at", { ascending: false }).limit(200);
+    let q = sb.from("patients").select("*").is("deleted_at", null).order("created_at", { ascending: false }).limit(200);
     if (term) q = q.or(`name.ilike.%${term}%,phone.ilike.%${term}%`);
     const { data, error } = await q;
     const tbody = document.getElementById("patientsTbody");
@@ -815,8 +1038,12 @@ VIEWS.patients = async function(content) {
   if (addBtn) addBtn.addEventListener("click", () => openPatientForm(null, () => load(document.getElementById("patientSearch").value.trim())));
 };
 
+function clearFieldBtnHtml(showClear, field, label) {
+  return showClear ? `<button type="button" class="btn btn-secondary btn-sm" data-clear-field="${field}" data-clear-label="${escapeHtml(label)}" title="Clear ${escapeHtml(label)}" style="flex-shrink:0">✕ Clear</button>` : ``;
+}
 function openPatientForm(patient, onSaved) {
   const p = patient || {};
+  const showClear = !!patient && can("admin"); // clearing a field is an immediate DB write - only meaningful (and only offered) once the patient already exists
   openModal(patient ? "Edit Patient" : "Add Patient", `
     <form id="patientForm">
       <div class="form-row mb-8">
@@ -824,10 +1051,9 @@ function openPatientForm(patient, onSaved) {
         <div class="field"><label>Phone *</label><input name="phone" required placeholder="10-digit number, e.g. 9811458797" value="${escapeHtml(p.phone||'')}"></div>
       </div>
       <div class="form-row mb-8">
-        <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(p.email||'')}"></div>
-        <div class="field"><label>Date of Birth</label><input name="dob" type="date" value="${p.dob||''}"></div>
-      </div>
-      <div class="form-row mb-8">
+        <div class="field"><label>Email</label>
+          <div class="flex gap-8"><input name="email" type="email" style="flex:1" value="${escapeHtml(p.email||'')}">${clearFieldBtnHtml(showClear,'email','Email')}</div>
+        </div>
         <div class="field"><label>Gender</label>
           <select name="gender">
             <option value="">—</option>
@@ -836,10 +1062,33 @@ function openPatientForm(patient, onSaved) {
             <option ${p.gender==='other'?'selected':''}>other</option>
           </select>
         </div>
-        <div class="field"><label>Emergency Contact Phone</label><input name="emergency_contact_phone" value="${escapeHtml(p.emergency_contact_phone||'')}"></div>
       </div>
-      <div class="field mb-8"><label>Address</label><textarea name="address" rows="2">${escapeHtml(p.address||'')}</textarea></div>
-      <div class="field mb-8"><label>Notes</label><textarea name="notes" rows="2">${escapeHtml(p.notes||'')}</textarea></div>
+      <div class="form-row mb-8">
+        <div class="field">
+          <label>Date of Birth (dd/mm/yyyy)</label>
+          <input id="dobInput" placeholder="dd/mm/yyyy" autocomplete="off" value="${p.dob ? isoToDMY(p.dob) : ''}">
+          <div class="field-error" id="dobError"></div>
+        </div>
+        <div class="field">
+          <label>Age <span class="muted" id="ageApproxLabel" style="display:none;font-weight:400;">(approx., from age only)</span></label>
+          <input id="ageInput" type="number" min="0" max="130" autocomplete="off" value="${p.dob ? computeAgeFromISO(p.dob) : ''}">
+          <div class="field-hint">Type DOB above if known - it always wins. Age alone gives an approximate 1 Jan DOB.</div>
+        </div>
+      </div>
+      <div class="form-row mb-8">
+        <div class="field"><label>Emergency Contact Name</label>
+          <div class="flex gap-8"><input name="emergency_contact_name" style="flex:1" value="${escapeHtml(p.emergency_contact_name||'')}">${clearFieldBtnHtml(showClear,'emergency_contact_name','Emergency Contact Name')}</div>
+        </div>
+        <div class="field"><label>Emergency Contact Phone</label>
+          <div class="flex gap-8"><input name="emergency_contact_phone" style="flex:1" value="${escapeHtml(p.emergency_contact_phone||'')}">${clearFieldBtnHtml(showClear,'emergency_contact_phone','Emergency Contact Phone')}</div>
+        </div>
+      </div>
+      <div class="field mb-8"><label>Address</label>
+        <div class="flex gap-8"><textarea name="address" rows="2" style="flex:1">${escapeHtml(p.address||'')}</textarea>${clearFieldBtnHtml(showClear,'address','Address')}</div>
+      </div>
+      <div class="field mb-8"><label>Notes</label>
+        <div class="flex gap-8"><textarea name="notes" rows="2" style="flex:1">${escapeHtml(p.notes||'')}</textarea>${clearFieldBtnHtml(showClear,'notes','Notes')}</div>
+      </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
         <button type="submit" class="btn btn-primary">Save</button>
@@ -852,6 +1101,61 @@ function openPatientForm(patient, onSaved) {
   patientForm.querySelectorAll('[name="phone"], [name="emergency_contact_phone"]').forEach(el => {
     el.addEventListener("blur", () => { if (el.value.trim()) el.value = normalizePhone(el.value); });
   });
+  // Admin-only per-field "Clear" buttons: immediate, direct UPDATE of just
+  // that column to null - not a soft delete, no Trash entry, no undo beyond
+  // the confirm dialog itself.
+  patientForm.querySelectorAll("[data-clear-field]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const field = btn.dataset.clearField, label = btn.dataset.clearLabel;
+      confirmClearField("patients", patient.id, field, label, () => {
+        const input = patientForm.querySelector(`[name="${field}"]`);
+        if (input) input.value = "";
+        p[field] = null;
+      });
+    });
+  });
+
+  // DOB <-> Age wiring. `dobIsApprox` tracks whether the DOB box currently
+  // holds a real typed date (false) or one we derived from Age alone (true,
+  // starts true because an empty box has nothing explicit in it yet). DOB
+  // always wins: once it holds a real date, editing Age never overwrites it.
+  const dobInput = document.getElementById("dobInput");
+  const ageInput = document.getElementById("ageInput");
+  const dobError = document.getElementById("dobError");
+  const ageApproxLabel = document.getElementById("ageApproxLabel");
+  let dobIsApprox = !(p.dob);
+  if (!p.dob) { ageApproxLabel.style.display = "none"; } // nothing entered yet
+  dobInput.addEventListener("input", () => {
+    const val = dobInput.value.trim();
+    dobInput.classList.remove("has-error");
+    if (!val) {
+      dobError.textContent = ""; dobIsApprox = true; ageApproxLabel.style.display = "none";
+      return;
+    }
+    if (!isValidDMY(val)) {
+      dobError.textContent = "Enter a valid date as dd/mm/yyyy (not in the future).";
+      dobInput.classList.add("has-error");
+      return;
+    }
+    dobError.textContent = "";
+    dobIsApprox = false;
+    ageApproxLabel.style.display = "none";
+    ageInput.value = computeAgeFromISO(dmyToISO(val));
+  });
+  ageInput.addEventListener("input", () => {
+    if (!dobIsApprox) return; // an explicit DOB is already present - it wins
+    const approx = approxDMYFromAge(ageInput.value);
+    if (approx) {
+      dobInput.value = approx;
+      dobError.textContent = "";
+      dobInput.classList.remove("has-error");
+      ageApproxLabel.style.display = "inline";
+    } else {
+      dobInput.value = "";
+      ageApproxLabel.style.display = "none";
+    }
+  });
+
   patientForm.addEventListener("submit", async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -860,6 +1164,20 @@ function openPatientForm(patient, onSaved) {
     payload.phone = normalizePhone(payload.phone);
     if (payload.emergency_contact_phone) payload.emergency_contact_phone = normalizePhone(payload.emergency_contact_phone);
     payload.updated_at = new Date().toISOString();
+    const dobVal = dobInput.value.trim();
+    if (dobVal) {
+      if (!isValidDMY(dobVal)) {
+        dobError.textContent = "Enter a valid date as dd/mm/yyyy (not in the future).";
+        dobInput.classList.add("has-error");
+        dobInput.focus();
+        return;
+      }
+      payload.dob = dmyToISO(dobVal);
+    } else if (ageInput.value.trim()) {
+      payload.dob = dmyToISO(approxDMYFromAge(ageInput.value.trim()));
+    } else {
+      payload.dob = null;
+    }
     let error;
     if (patient) ({ error } = await sb.from("patients").update(payload).eq("id", patient.id));
     else ({ error } = await sb.from("patients").insert(payload));
@@ -878,11 +1196,71 @@ function openPatientForm(patient, onSaved) {
 }
 
 /* ---------------------------------------------------------------------
+   SEND MESSAGE (freeform + templates -> staff_messages, queued for the
+   n8n WhatsApp scanner to pick up and send; this only ever inserts a
+   "pending" row here, it never talks to WhatsApp directly).
+   `appointment` is optional ({id, slot_time}) when opened from a booking row.
+   --------------------------------------------------------------------- */
+function openSendMessageModal(patient, appointment) {
+  const name = (patient.name || "").trim() || "there";
+  const apptLine = appointment && appointment.slot_time ? ` (${fmtDate(appointment.slot_time)})` : "";
+  const templates = [
+    { key: "booking_confirmation", label: "Booking Confirmation",
+      text: `Namaste ${name} 🙏 Aapki appointment Shivwik Holistic Care mein confirm ho gayi hai${apptLine}. Kisi bhi sawal ke liye is number par message kar sakte hain. Dhanyawad!` },
+    { key: "clinic_location", label: "Clinic Location",
+      text: `Namaste ${name} 🙏 Shivwik Holistic Care ka address hai: 182, Ambica Vihar, Paschim Vihar, New Delhi 110087. Google Maps location: https://maps.app.goo.gl/LDN7qMHyddyL3egG9 Milte hain! 😊` },
+    { key: "reminder", label: "Reminder",
+      text: `Namaste ${name} 🙏 Yeh ek reminder hai aapki appointment ke liye Shivwik Holistic Care mein${apptLine}. Please time par pahunch jaayein. Kisi badlav ke liye humein batayein. Dhanyawad!` },
+  ];
+  openModal(`Send Message${patient.name ? " — " + patient.name : ""}`, `
+    <div class="field mb-8">
+      <label>Quick Templates</label>
+      <div class="flex gap-8" style="flex-wrap:wrap;">
+        ${templates.map(t => `<button type="button" class="btn btn-secondary btn-sm" data-tpl="${t.key}">${escapeHtml(t.label)}</button>`).join("")}
+      </div>
+    </div>
+    <div class="field mb-8">
+      <label>Message</label>
+      <textarea id="msgText" rows="5" placeholder="Type a message, or pick a template above then edit it…"></textarea>
+    </div>
+    <div class="field-hint mb-8">To: ${escapeHtml(patient.phone || "—")}. This queues the message — actual WhatsApp delivery happens shortly after, via the automation.</div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+      <button type="button" class="btn btn-primary" id="sendMsgBtn">Send</button>
+    </div>`);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  let usedTemplateKey = null;
+  document.querySelectorAll("[data-tpl]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const tpl = templates.find(t => t.key === btn.dataset.tpl);
+      document.getElementById("msgText").value = tpl.text;
+      usedTemplateKey = tpl.key;
+    });
+  });
+  document.getElementById("sendMsgBtn").addEventListener("click", async () => {
+    const text = document.getElementById("msgText").value.trim();
+    if (!text) { toast("Type a message or choose a template first.", "error"); return; }
+    const payload = {
+      patient_id: patient.id,
+      appointment_id: (appointment && appointment.id) || null,
+      template_key: usedTemplateKey,
+      message_text: text,
+      status: "pending",
+      created_by: state.staff.id,
+    };
+    const { error } = await sb.from("staff_messages").insert(payload);
+    if (error) { toast("Error: " + error.message, "error"); return; }
+    closeModal();
+    toast("Message queued — it will be sent via WhatsApp shortly.", "success");
+  });
+}
+
+/* ---------------------------------------------------------------------
    PATIENT PROFILE (tabs: overview / clinical / appointments / billing)
    --------------------------------------------------------------------- */
 VIEWS.patientProfile = async function(content) {
   const id = state.viewParams.id;
-  const { data: patient, error } = await sb.from("patients").select("*").eq("id", id).maybeSingle();
+  const { data: patient, error } = await sb.from("patients").select("*").eq("id", id).is("deleted_at", null).maybeSingle();
   if (error || !patient) { content.innerHTML = `<div class="panel">Patient not found.</div>`; return; }
   document.getElementById("pageTitle").textContent = patient.name || "Patient";
   document.getElementById("pageSub").textContent = patient.phone || "";
@@ -905,26 +1283,34 @@ VIEWS.patientProfile = async function(content) {
       body.innerHTML = `
         <div class="panel">
           <div class="panel-head"><div class="panel-title">Details</div>
-            ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="editPatientBtn">Edit</button>` : ``}
+            <div class="flex gap-8">
+              ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="sendMsgFromProfileBtn">Send Message</button>` : ``}
+              ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="editPatientBtn">Edit</button>` : ``}
+              ${can("admin") ? `<button class="btn btn-danger btn-sm" id="deletePatientBtn">Delete</button>` : ``}
+            </div>
           </div>
           <div class="grid grid-2">
             <div><span class="muted">Email:</span> ${escapeHtml(patient.email||'—')}</div>
             <div><span class="muted">DOB:</span> ${fmtDateOnly(patient.dob)}</div>
             <div><span class="muted">Gender:</span> ${escapeHtml(patient.gender||'—')}</div>
-            <div><span class="muted">Emergency Contact:</span> ${escapeHtml(patient.emergency_contact_phone||'—')}</div>
+            <div><span class="muted">Emergency Contact:</span> ${escapeHtml(patient.emergency_contact_name||'—')} ${escapeHtml(patient.emergency_contact_phone||'')}</div>
             <div style="grid-column:1/-1"><span class="muted">Address:</span> ${escapeHtml(patient.address||'—')}</div>
             <div style="grid-column:1/-1"><span class="muted">Notes:</span> ${escapeHtml(patient.notes||'—')}</div>
           </div>
         </div>`;
       const editBtn = document.getElementById("editPatientBtn");
       if (editBtn) editBtn.addEventListener("click", () => openPatientForm(patient, () => navigate("patientProfile", { id })));
+      const sendMsgBtn = document.getElementById("sendMsgFromProfileBtn");
+      if (sendMsgBtn) sendMsgBtn.addEventListener("click", () => openSendMessageModal(patient, null));
+      const deleteBtn = document.getElementById("deletePatientBtn");
+      if (deleteBtn) deleteBtn.addEventListener("click", () => confirmSoftDelete("patients", patient.id, "Patient", () => navigate("patients")));
     } else if (tab === "Clinical") {
       const nowIso = new Date().toISOString();
       const [hist, protocols, sessionNotes, nextAppt] = await Promise.all([
         sb.from("medical_history").select("*").eq("patient_id", id).order("created_at",{ascending:false}),
         sb.from("treatment_protocols").select("*").eq("patient_id", id).order("created_at",{ascending:false}),
         sb.from("treatment_session_notes").select("*, protocol:treatment_protocols(protocol_name)").eq("patient_id", id).order("session_date",{ascending:false}),
-        sb.from("appointments").select("slot_time,status,service:services(name),doctor:doctors(name)").eq("patient_id", id).gte("slot_time", nowIso).in("status",["confirmed","pending_doctor_approval"]).order("slot_time",{ascending:true}).limit(1),
+        sb.from("appointments").select("slot_time,status,service:services(name),doctor:doctors(name)").eq("patient_id", id).is("deleted_at", null).gte("slot_time", nowIso).in("status",["confirmed","pending_doctor_approval"]).order("slot_time",{ascending:true}).limit(1),
       ]);
       const next = (nextAppt.data||[])[0];
       const activeProtocols = (protocols.data||[]).filter(p=>p.status==='active');
@@ -1065,17 +1451,31 @@ VIEWS.patientProfile = async function(content) {
       if (addSessionBtn) addSessionBtn.addEventListener("click", () => openSessionNoteForm(protocols.data[0]?.id));
       body.querySelectorAll("[data-add-session]").forEach(btn => btn.addEventListener("click", () => openSessionNoteForm(btn.dataset.addSession)));
     } else if (tab === "Appointments") {
-      const { data } = await sb.from("appointments").select("*, doctor:doctors(name)").eq("patient_id", id).order("slot_time",{ascending:false});
+      const { data } = await sb.from("appointments").select("*, doctor:doctors(name), patient:patients(name,phone)").eq("patient_id", id).is("deleted_at", null).order("slot_time",{ascending:false});
       body.innerHTML = `
         <div class="panel">
-          <table><thead><tr><th>When</th><th>Doctor</th><th>Status</th><th>Calendar</th></tr></thead>
+          <table><thead><tr><th>When</th><th>Doctor</th><th>Type</th><th>Status</th><th>Calendar</th><th></th></tr></thead>
           <tbody>${(data||[]).map(a=>`<tr>
-            <td>${fmtDate(a.slot_time)}</td><td>${escapeHtml(a.doctor?.name||'—')}</td><td>${statusBadge(a.status)}</td>
+            <td>${fmtDate(a.slot_time)}</td><td>${escapeHtml(a.doctor?.name||'—')}</td><td>${apptTypeLabel(a.appointment_type)}</td><td>${statusBadge(a.status)}</td>
             <td>${a.google_event_id ? '<span class="badge green">Synced</span>' : '<span class="badge grey">Pending</span>'}</td>
-          </tr>`).join("")||`<tr><td colspan="4" class="empty-state">No appointments yet.</td></tr>`}</tbody></table>
+            <td class="flex gap-8">
+              ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" data-editid="${a.id}">Edit</button>` : ``}
+              ${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-appt="${a.id}">Delete</button>` : ``}
+            </td>
+          </tr>`).join("")||`<tr><td colspan="6" class="empty-state">No appointments yet.</td></tr>`}</tbody></table>
         </div>`;
+      body.querySelectorAll("[data-editid]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const appt = (data||[]).find(x => x.id === btn.dataset.editid);
+          if (appt) openEditAppointmentForm(appt, () => renderTab("Appointments"));
+        });
+      });
+      body.querySelectorAll("[data-del-appt]").forEach(btn => {
+        btn.addEventListener("click", () => confirmSoftDelete("appointments", btn.dataset.delAppt, "Appointment", () => renderTab("Appointments")));
+      });
     } else if (tab === "Billing") {
-      const { data } = await sb.from("invoices").select("*, payments(*)").eq("patient_id", id).order("created_at",{ascending:false});
+      const { data } = await sb.from("invoices").select("*, payments(*)").eq("patient_id", id).is("deleted_at", null).order("created_at",{ascending:false});
+      (data||[]).forEach(inv => { inv.payments = (inv.payments||[]).filter(p => !p.deleted_at); });
       body.innerHTML = `
         <div class="panel">
           <div class="panel-head"><div class="panel-title">Invoices</div>
@@ -1085,13 +1485,27 @@ VIEWS.patientProfile = async function(content) {
           <tbody>${(data||[]).map(inv=>`<tr>
             <td>${fmtDateOnly(inv.created_at)}</td><td>${escapeHtml(inv.description||'—')}</td><td>${fmtMoney(inv.amount)}</td>
             <td><span class="badge ${inv.status==='paid'?'green':inv.status==='partial'?'yellow':'red'}">${escapeHtml(inv.status)}</span></td>
-            <td>${can("admin","billing","front_office") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}">Record Payment</button>` : ``}</td>
-          </tr>`).join("")||`<tr><td colspan="5" class="empty-state">No invoices yet.</td></tr>`}</tbody></table>
+            <td class="flex gap-8">
+              ${can("admin","billing","front_office") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}">Record Payment</button>` : ``}
+              ${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-inv="${inv.id}">Delete</button>` : ``}
+            </td>
+          </tr>${(inv.payments||[]).length ? `<tr><td></td><td colspan="4" style="padding-top:0">
+            <table style="margin-top:4px"><tbody>${inv.payments.map(p=>`<tr>
+              <td style="font-size:12px" class="muted">${fmtDate(p.created_at)} — ${fmtMoney(p.amount)} (${escapeHtml(p.method||'—')})</td>
+              <td style="text-align:right">${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-pay="${p.id}">Delete</button>` : ``}</td>
+            </tr>`).join("")}</tbody></table>
+          </td></tr>` : ``}`).join("")||`<tr><td colspan="5" class="empty-state">No invoices yet.</td></tr>`}</tbody></table>
         </div>`;
       const addInvBtn = document.getElementById("addInvoiceBtn");
       if (addInvBtn) addInvBtn.addEventListener("click", () => openInvoiceForm(id, () => renderTab("Billing")));
       body.querySelectorAll("[data-pay]").forEach(btn => {
         btn.addEventListener("click", () => openPaymentForm(btn.dataset.pay, id, Number(btn.dataset.amount), () => renderTab("Billing")));
+      });
+      body.querySelectorAll("[data-del-inv]").forEach(btn => {
+        btn.addEventListener("click", () => confirmSoftDelete("invoices", btn.dataset.delInv, "Invoice", () => renderTab("Billing")));
+      });
+      body.querySelectorAll("[data-del-pay]").forEach(btn => {
+        btn.addEventListener("click", () => confirmSoftDelete("payments", btn.dataset.delPay, "Payment", () => renderTab("Billing")));
       });
     }
   }
@@ -1103,45 +1517,70 @@ VIEWS.patientProfile = async function(content) {
    APPOINTMENTS
    ====================================================================== */
 VIEWS.appointments = async function(content) {
+  const canManage = can("admin","doctor","reception","front_office");
+  const { data: patientsForFilter } = await sb.from("patients").select("id,name,phone").is("deleted_at", null).order("name");
   content.innerHTML = `
     <div class="panel">
-      <div class="panel-head">
-        <div class="flex gap-8">
-          <select id="statusFilter">
-            <option value="">All statuses</option>
-            <option value="confirmed">Confirmed</option>
-            <option value="pending_doctor_approval">Pending Doctor Approval</option>
-            <option value="pending_confirmation">Pending Confirmation (Overlap)</option>
-            <option value="completed">Completed</option>
-            <option value="cancelled">Cancelled</option>
-            <option value="missed">Missed</option>
-            <option value="declined">Declined</option>
-          </select>
+      <div class="panel-head" style="align-items:flex-end">
+        <div class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+          <div class="field" style="margin-bottom:0;min-width:135px"><label>From</label><input type="date" id="apptDateFrom"></div>
+          <div class="field" style="margin-bottom:0;min-width:135px"><label>To</label><input type="date" id="apptDateTo"></div>
+          <div class="field" style="margin-bottom:0;min-width:170px">
+            <label>Status</label>
+            <select id="statusFilter">
+              <option value="">All statuses</option>
+              ${APPT_STATUSES.map(s=>`<option value="${s}">${escapeHtml(s.replace(/_/g,' '))}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:0;min-width:130px">
+            <label>Type</label>
+            <select id="typeFilter">
+              <option value="">All types</option>
+              ${Object.keys(APPT_TYPES).map(t=>`<option value="${t}">${APPT_TYPES[t]}</option>`).join("")}
+            </select>
+          </div>
+          <div style="margin-bottom:0;min-width:220px">${patientComboboxHtml(patientsForFilter||[], { label: "Patient", required: false })}</div>
+          <button type="button" class="btn btn-secondary btn-sm" id="clearApptFiltersBtn">Clear filters</button>
         </div>
-        ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-primary btn-sm" id="addApptBtn">+ New Appointment</button>` : ``}
+        ${canManage ? `<button class="btn btn-primary btn-sm" id="addApptBtn">+ New Appointment</button>` : ``}
       </div>
-      <table><thead><tr><th>When</th><th>Patient</th><th>Doctor</th><th>Service</th><th>Status</th><th>Calendar</th><th></th></tr></thead>
-      <tbody id="apptTbody"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody></table>
+      <table><thead><tr><th>When</th><th>Patient</th><th>Doctor</th><th>Service</th><th>Type</th><th>Status</th><th>Calendar</th><th></th></tr></thead>
+      <tbody id="apptTbody"><tr><td colspan="8" class="empty-state">Loading…</td></tr></tbody></table>
     </div>`;
+  wirePatientCombobox(content, patientsForFilter||[]);
 
-  async function load(status) {
-    let q = sb.from("appointments").select("*, patient:patients(name,phone), doctor:doctors(name), service:services(name)").order("slot_time",{ascending:false}).limit(200);
-    if (status) q = q.eq("status", status);
+  const filters = { status: "", type: "", patientId: "", dateFrom: "", dateTo: "" };
+
+  async function load() {
+    let q = sb.from("appointments").select("*, patient:patients(name,phone), doctor:doctors(name), service:services(name)").is("deleted_at", null).order("slot_time",{ascending:false}).limit(200);
+    if (filters.status) q = q.eq("status", filters.status);
+    if (filters.type) q = q.eq("appointment_type", filters.type);
+    if (filters.patientId) q = q.eq("patient_id", filters.patientId);
+    if (filters.dateFrom) q = q.gte("slot_time", new Date(filters.dateFrom + "T00:00:00").toISOString());
+    if (filters.dateTo) q = q.lte("slot_time", new Date(filters.dateTo + "T23:59:59.999").toISOString());
     const { data, error } = await q;
     const tbody = document.getElementById("apptTbody");
-    if (error) { tbody.innerHTML = `<tr><td colspan="7">Error: ${escapeHtml(error.message)}</td></tr>`; return; }
+    if (error) { tbody.innerHTML = `<tr><td colspan="8">Error: ${escapeHtml(error.message)}</td></tr>`; return; }
     tbody.innerHTML = (data||[]).map(a => `
       <tr>
         <td>${fmtDate(a.slot_time)}</td>
         <td>${escapeHtml(a.patient?.name||'—')}<div class="muted" style="font-size:11px">${escapeHtml(a.patient?.phone||'')}</div></td>
         <td>${escapeHtml(a.doctor?.name||'—')}</td>
         <td>${escapeHtml(a.service?.name||'—')}</td>
+        <td>${apptTypeLabel(a.appointment_type)}</td>
         <td>${statusBadge(a.status)}</td>
         <td>${a.google_event_id ? '<span class="badge green">Synced</span>' : '<span class="badge grey">Pending</span>'}</td>
-        <td>${can("admin","doctor","reception","front_office") ? `<select data-id="${a.id}" class="statusSelect">
-            ${["confirmed","completed","cancelled","missed"].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
-          </select>` : ``}</td>
-      </tr>`).join("") || `<tr><td colspan="7" class="empty-state">No appointments found.</td></tr>`;
+        <td>
+          <div class="flex gap-8">
+            ${canManage ? `<select data-id="${a.id}" class="statusSelect">
+              ${["confirmed","completed","cancelled","missed"].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
+            </select>` : ``}
+            ${canManage ? `<button class="btn btn-secondary btn-sm" data-editid="${a.id}">Edit</button>` : ``}
+            ${canManage ? `<button class="btn btn-secondary btn-sm" data-msgid="${a.id}">Message</button>` : ``}
+            ${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-appt="${a.id}">Delete</button>` : ``}
+          </div>
+        </td>
+      </tr>`).join("") || `<tr><td colspan="8" class="empty-state">No appointments found.</td></tr>`;
     tbody.querySelectorAll(".statusSelect").forEach(sel => {
       sel.addEventListener("change", async () => {
         const payload = { status: sel.value };
@@ -1150,24 +1589,53 @@ VIEWS.appointments = async function(content) {
         if (error) toast(error.message, "error"); else toast("Status updated.", "success");
       });
     });
+    tbody.querySelectorAll("[data-editid]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const appt = (data||[]).find(x => x.id === btn.dataset.editid);
+        if (appt) openEditAppointmentForm(appt, load);
+      });
+    });
+    tbody.querySelectorAll("[data-msgid]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const appt = (data||[]).find(x => x.id === btn.dataset.msgid);
+        if (!appt) return;
+        openSendMessageModal(
+          { id: appt.patient_id, name: appt.patient?.name, phone: appt.patient?.phone },
+          { id: appt.id, slot_time: appt.slot_time }
+        );
+      });
+    });
+    tbody.querySelectorAll("[data-del-appt]").forEach(btn => {
+      btn.addEventListener("click", () => confirmSoftDelete("appointments", btn.dataset.delAppt, "Appointment", load));
+    });
   }
-  await load("");
-  document.getElementById("statusFilter").addEventListener("change", e => load(e.target.value));
+  await load();
+  document.getElementById("apptDateFrom").addEventListener("change", e => { filters.dateFrom = e.target.value; load(); });
+  document.getElementById("apptDateTo").addEventListener("change", e => { filters.dateTo = e.target.value; load(); });
+  document.getElementById("statusFilter").addEventListener("change", e => { filters.status = e.target.value; load(); });
+  document.getElementById("typeFilter").addEventListener("change", e => { filters.type = e.target.value; load(); });
+  content.querySelector('[data-combobox] input[type="hidden"]').addEventListener("change", e => { filters.patientId = e.target.value; load(); });
+  document.getElementById("clearApptFiltersBtn").addEventListener("click", () => {
+    filters.status = ""; filters.type = ""; filters.patientId = ""; filters.dateFrom = ""; filters.dateTo = "";
+    document.getElementById("apptDateFrom").value = ""; document.getElementById("apptDateTo").value = "";
+    document.getElementById("statusFilter").value = ""; document.getElementById("typeFilter").value = "";
+    const combo = content.querySelector('[data-combobox]');
+    combo.querySelector('.combobox-input').value = ""; combo.querySelector('input[type="hidden"]').value = "";
+    load();
+  });
   const addBtn = document.getElementById("addApptBtn");
-  if (addBtn) addBtn.addEventListener("click", () => openAppointmentForm(() => load(document.getElementById("statusFilter").value)));
+  if (addBtn) addBtn.addEventListener("click", () => openAppointmentForm(load));
 };
 
 async function openAppointmentForm(onSaved) {
   const [{ data: patients }, { data: doctors }, { data: services }] = await Promise.all([
-    sb.from("patients").select("id,name,phone").order("name"),
+    sb.from("patients").select("id,name,phone").is("deleted_at", null).order("name"),
     sb.from("doctors").select("id,name").eq("is_active", true).order("name"),
     sb.from("services").select("id,name,specialty").eq("is_active", true).order("specialty").order("name"),
   ]);
   openModal("New Appointment", `
     <form id="apptForm">
-      <div class="field mb-8"><label>Patient *</label>
-        <select name="patient_id" required>${(patients||[]).map(p=>`<option value="${p.id}">${escapeHtml(p.name)} — ${escapeHtml(p.phone||'')}</option>`).join("")}</select>
-      </div>
+      ${patientComboboxHtml(patients||[])}
       <div class="field mb-8"><label>Doctor</label>
         <select name="doctor_id"><option value="">—</option>${(doctors||[]).map(d=>`<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}</select>
       </div>
@@ -1177,17 +1645,19 @@ async function openAppointmentForm(onSaved) {
       <div class="field mb-8"><label>Date &amp; Time *</label><input name="slot_time" type="datetime-local" required></div>
       <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Book</button></div>
     </form>`);
+  wirePatientCombobox(document.getElementById("modalBody"), patients||[]);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("apptForm").addEventListener("submit", async e => {
     e.preventDefault();
     const payload = Object.fromEntries(new FormData(e.target).entries());
+    if (!payload.patient_id) return toast("Please select a patient.", "error");
     payload.slot_time = new Date(payload.slot_time).toISOString();
     payload.status = "confirmed"; payload.source = "dashboard";
     if (!payload.doctor_id) delete payload.doctor_id;
     if (!payload.service_id) delete payload.service_id;
     if (payload.doctor_id) {
       const { data: clash } = await sb.from("appointments").select("id")
-        .eq("doctor_id", payload.doctor_id).eq("slot_time", payload.slot_time).eq("status", "confirmed");
+        .eq("doctor_id", payload.doctor_id).eq("slot_time", payload.slot_time).eq("status", "confirmed").is("deleted_at", null);
       if (clash && clash.length) {
         if (!confirm("This doctor already has a CONFIRMED appointment at this exact time. Book anyway as a double-booking?")) return;
       }
@@ -1195,6 +1665,54 @@ async function openAppointmentForm(onSaved) {
     const { error } = await sb.from("appointments").insert(payload);
     if (error) return toast(error.message, "error");
     closeModal(); toast("Appointment booked.", "success"); onSaved && onSaved();
+  });
+}
+
+/* Edit an existing appointment - clerical correction only (time, doctor,
+   service, status, type, home visit address). Patient is never reassigned. */
+async function openEditAppointmentForm(appt, onSaved) {
+  const [{ data: doctors }, { data: services }] = await Promise.all([
+    sb.from("doctors").select("id,name").eq("is_active", true).order("name"),
+    sb.from("services").select("id,name,specialty").eq("is_active", true).order("specialty").order("name"),
+  ]);
+  const currentType = appt.appointment_type || "clinic";
+  openModal("Edit Appointment", `
+    <form id="editApptForm">
+      <div class="field mb-8"><label>Patient</label><input value="${escapeHtml(appt.patient?.name||'—')}${appt.patient?.phone ? ' — '+escapeHtml(appt.patient.phone) : ''}" disabled></div>
+      <div class="field mb-8"><label>Doctor</label>
+        <select name="doctor_id"><option value="">—</option>${(doctors||[]).map(d=>`<option value="${d.id}" ${appt.doctor_id===d.id?'selected':''}>${escapeHtml(d.name)}</option>`).join("")}</select>
+      </div>
+      <div class="field mb-8"><label>Service</label>
+        <select name="service_id"><option value="">—</option>${(services||[]).map(s=>`<option value="${s.id}" ${appt.service_id===s.id?'selected':''}>${escapeHtml(s.specialty)} — ${escapeHtml(s.name)}</option>`).join("")}</select>
+      </div>
+      <div class="field mb-8"><label>Date &amp; Time *</label><input name="slot_time" type="datetime-local" required value="${toLocalInput(appt.slot_time)}"></div>
+      <div class="field mb-8"><label>Status</label>
+        <select name="status">${APPT_STATUSES.map(s=>`<option value="${s}" ${appt.status===s?'selected':''}>${escapeHtml(s.replace(/_/g,' '))}</option>`).join("")}</select>
+      </div>
+      <div class="field mb-8"><label>Type</label>
+        <select name="appointment_type" id="editApptType">${Object.keys(APPT_TYPES).map(t=>`<option value="${t}" ${currentType===t?'selected':''}>${APPT_TYPES[t]}</option>`).join("")}</select>
+      </div>
+      <div class="field mb-8" id="homeAddressField" style="${currentType==='home'?'':'display:none'}">
+        <label>Home Visit Address</label>
+        <textarea name="home_visit_address" rows="2">${escapeHtml(appt.home_visit_address||'')}</textarea>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Save Changes</button></div>
+    </form>`);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  document.getElementById("editApptType").addEventListener("change", e => {
+    document.getElementById("homeAddressField").style.display = e.target.value === "home" ? "" : "none";
+  });
+  document.getElementById("editApptForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const payload = Object.fromEntries(new FormData(e.target).entries());
+    payload.doctor_id = payload.doctor_id || null;
+    payload.service_id = payload.service_id || null;
+    payload.slot_time = new Date(payload.slot_time).toISOString();
+    if (payload.appointment_type !== "home") payload.home_visit_address = null;
+    if (payload.status === "completed" && appt.status !== "completed") payload.completed_at = new Date().toISOString();
+    const { error } = await sb.from("appointments").update(payload).eq("id", appt.id);
+    if (error) return toast(error.message, "error");
+    closeModal(); toast("Appointment updated.", "success"); onSaved && onSaved();
   });
 }
 
@@ -1223,12 +1741,10 @@ VIEWS.clinical = async function(content) {
     </div>`;
   content.querySelectorAll("[data-pid]").forEach(tr => tr.addEventListener("click", () => navigate("patientProfile", { id: tr.dataset.pid })));
   document.getElementById("quickAddProtocolBtn").addEventListener("click", async () => {
-    const { data: patients } = await sb.from("patients").select("id,name,phone").order("name");
+    const { data: patients } = await sb.from("patients").select("id,name,phone").is("deleted_at", null).order("name");
     openModal("Add Treatment Protocol", `
       <form id="quickProtoForm">
-        <div class="field mb-8"><label>Patient *</label>
-          <select name="patient_id" required>${(patients||[]).map(p=>`<option value="${p.id}">${escapeHtml(p.name)} — ${escapeHtml(p.phone||'')}</option>`).join("")}</select>
-        </div>
+        ${patientComboboxHtml(patients||[])}
         <div class="field mb-8"><label>Protocol Name *</label><input name="protocol_name" required></div>
         <div class="field mb-8"><label>Description</label><textarea name="description" rows="2"></textarea></div>
         <div class="form-row mb-8">
@@ -1238,10 +1754,12 @@ VIEWS.clinical = async function(content) {
         <div class="field mb-8"><label>Prognosis</label><textarea name="prognosis" rows="2" placeholder="Expected outcome / recovery trajectory"></textarea></div>
         <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
       </form>`);
+    wirePatientCombobox(document.getElementById("modalBody"), patients||[]);
     document.getElementById("cancelBtn").addEventListener("click", closeModal);
     document.getElementById("quickProtoForm").addEventListener("submit", async e => {
       e.preventDefault();
       const payload = Object.fromEntries(new FormData(e.target).entries());
+      if (!payload.patient_id) return toast("Please select a patient.", "error");
       if (payload.sessions_planned) payload.sessions_planned = Number(payload.sessions_planned); else delete payload.sessions_planned;
       if (!payload.prognosis) delete payload.prognosis;
       payload.created_by = state.staff.id;
@@ -1420,7 +1938,7 @@ async function renderServicesTab(body) {
    ====================================================================== */
 VIEWS.billing = async function(content) {
   const { data, error } = await sb.from("invoices")
-    .select("*, patient:patients(name,phone)").order("created_at",{ascending:false}).limit(300);
+    .select("*, patient:patients(name,phone)").is("deleted_at", null).order("created_at",{ascending:false}).limit(300);
   const outstanding = (data||[]).filter(i=>i.status!=='paid'&&i.status!=='cancelled').reduce((s,i)=>s+Number(i.amount||0),0);
   content.innerHTML = `
     <div class="grid grid-3 mb-16">
@@ -1440,17 +1958,23 @@ VIEWS.billing = async function(content) {
           <td>${escapeHtml(inv.description||'—')}</td>
           <td>${fmtMoney(inv.amount)}</td>
           <td><span class="badge ${inv.status==='paid'?'green':inv.status==='partial'?'yellow':'red'}">${escapeHtml(inv.status)}</span></td>
-          <td>${can("admin","billing","front_office") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}" data-pid="${inv.patient_id}">Record Payment</button>` : ``}</td>
+          <td class="flex gap-8">
+            ${can("admin","billing","front_office") && inv.status!=='paid' ? `<button class="btn btn-secondary btn-sm" data-pay="${inv.id}" data-amount="${inv.amount}" data-pid="${inv.patient_id}">Record Payment</button>` : ``}
+            ${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-inv="${inv.id}">Delete</button>` : ``}
+          </td>
         </tr>`).join("") || `<tr><td colspan="6" class="empty-state">No invoices yet.</td></tr>`}
       </tbody></table>
     </div>`;
   const newBtn = document.getElementById("newInvoiceBtn");
   if (newBtn) newBtn.addEventListener("click", async () => {
-    const { data: patients } = await sb.from("patients").select("id,name,phone").order("name");
+    const { data: patients } = await sb.from("patients").select("id,name,phone").is("deleted_at", null).order("name");
     openInvoiceFormGeneric(patients||[], () => navigate("billing"));
   });
   content.querySelectorAll("[data-pay]").forEach(btn => {
     btn.addEventListener("click", () => openPaymentForm(btn.dataset.pay, btn.dataset.pid, Number(btn.dataset.amount), () => navigate("billing")));
+  });
+  content.querySelectorAll("[data-del-inv]").forEach(btn => {
+    btn.addEventListener("click", () => confirmSoftDelete("invoices", btn.dataset.delInv, "Invoice", () => navigate("billing")));
   });
 };
 
@@ -1477,9 +2001,7 @@ function openInvoiceForm(patientId, onSaved) {
 function openInvoiceFormGeneric(patients, onSaved) {
   openModal("New Invoice", `
     <form id="invForm">
-      <div class="field mb-8"><label>Patient *</label>
-        <select name="patient_id" required>${patients.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} — ${escapeHtml(p.phone||'')}</option>`).join("")}</select>
-      </div>
+      ${patientComboboxHtml(patients)}
       <div class="field mb-8"><label>Description *</label><input name="description" required></div>
       <div class="form-row mb-8">
         <div class="field"><label>Amount (₹) *</label><input name="amount" type="number" step="0.01" min="0" required></div>
@@ -1487,10 +2009,12 @@ function openInvoiceFormGeneric(patients, onSaved) {
       </div>
       <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">Create</button></div>
     </form>`);
+  wirePatientCombobox(document.getElementById("modalBody"), patients);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("invForm").addEventListener("submit", async e => {
     e.preventDefault();
     const payload = Object.fromEntries(new FormData(e.target).entries());
+    if (!payload.patient_id) return toast("Please select a patient.", "error");
     payload.amount = Number(payload.amount); payload.created_by = state.staff.id;
     const { error } = await sb.from("invoices").insert(payload);
     if (error) return toast(error.message, "error");
@@ -1529,7 +2053,7 @@ function openPaymentForm(invoiceId, patientId, remaining, onSaved) {
 VIEWS.feedback = async function(content) {
   const [{ data: esc, error: escErr }, { data: fb }] = await Promise.all([
     sb.from("escalations").select("*, patient:patients(name)").order("created_at",{ascending:false}).limit(200),
-    sb.from("feedback").select("*, patient:patients(name)").order("requested_at",{ascending:false}).limit(200),
+    sb.from("feedback").select("*, patient:patients(name)").is("deleted_at", null).order("requested_at",{ascending:false}).limit(200),
   ]);
   const open = (esc||[]).filter(e=>!e.resolved);
   const resolved = (esc||[]).filter(e=>e.resolved);
@@ -1550,12 +2074,13 @@ VIEWS.feedback = async function(content) {
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Recent Feedback Ratings</div></div>
       <p class="muted" style="font-size:12px;margin-bottom:10px">4&ndash;5★ ratings given after the website notice appear on the website as initials + month (e.g. "R.S., Oct 2026"). Patients can reply STOP on WhatsApp to be removed; admins can hide any rating here.</p>
-      <table><thead><tr><th>When</th><th>Patient</th><th>Rating</th><th>Website</th></tr></thead>
+      <table><thead><tr><th>When</th><th>Patient</th><th>Rating</th><th>Website</th><th></th></tr></thead>
       <tbody>${(fb||[]).map(f=>`<tr>
         <td>${fmtDate(f.requested_at)}</td><td>${escapeHtml(f.patient?.name||f.patient_phone||'—')}</td>
         <td>${f.rating ? `<span class="stars">${'★'.repeat(f.rating)}${'☆'.repeat(5-f.rating)}</span>` : `<span class="muted">No reply yet</span>`}</td>
         <td>${websiteRatingCell(f)}</td>
-      </tr>`).join("") || `<tr><td colspan="4" class="empty-state">No feedback collected yet.</td></tr>`}</tbody></table>
+        <td>${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-fb="${f.id}">Delete</button>` : ``}</td>
+      </tr>`).join("") || `<tr><td colspan="5" class="empty-state">No feedback collected yet.</td></tr>`}</tbody></table>
     </div>
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Resolved Escalations</div></div>
@@ -1570,6 +2095,9 @@ VIEWS.feedback = async function(content) {
     if (error) return toast(error.message, "error");
     toast("Website visibility updated.", "success"); navigate("feedback");
   }));
+  content.querySelectorAll("[data-del-fb]").forEach(btn => {
+    btn.addEventListener("click", () => confirmSoftDelete("feedback", btn.dataset.delFb, "Feedback", () => navigate("feedback")));
+  });
   content.querySelectorAll("[data-resolve]").forEach(btn => {
     btn.addEventListener("click", () => {
       openModal("Resolve Escalation", `
@@ -1638,6 +2166,7 @@ async function bookingsDuringClosure(c) {
     .gte("slot_time", `${c.start_date}T00:00:00+05:30`)
     .lt("slot_time", `${addDaysISO(c.end_date, 1)}T00:00:00+05:30`)
     .in("status", ["confirmed","pending_doctor_approval","pending_confirmation","reschedule_pending"])
+    .is("deleted_at", null)
     .order("slot_time");
   if (c.doctor_id) q = q.eq("doctor_id", c.doctor_id);
   const { data } = await q;
@@ -2014,13 +2543,13 @@ VIEWS.staff = async function(content) {
   content.innerHTML = `
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Team Members</div><button class="btn btn-primary btn-sm" id="addStaffBtn">+ Add Staff</button></div>
-      <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead>
-      <tbody id="staffTbody"><tr><td colspan="5" class="empty-state">Loading…</td></tr></tbody></table>
+      <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>2FA</th><th></th></tr></thead>
+      <tbody id="staffTbody"><tr><td colspan="6" class="empty-state">Loading…</td></tr></tbody></table>
     </div>`;
   async function load() {
     const { data, error } = await sb.from("staff").select("*").order("created_at");
     const tbody = document.getElementById("staffTbody");
-    if (error) { tbody.innerHTML = `<tr><td colspan="5">Error: ${escapeHtml(error.message)}</td></tr>`; return; }
+    if (error) { tbody.innerHTML = `<tr><td colspan="6">Error: ${escapeHtml(error.message)}</td></tr>`; return; }
     tbody.innerHTML = (data||[]).map(s => `
       <tr>
         <td>${escapeHtml(s.name)}</td>
@@ -2031,11 +2560,17 @@ VIEWS.staff = async function(content) {
           </select>
         </td>
         <td><span class="badge ${s.active?'green':'red'}">${s.active?'Active':'Inactive'}</span></td>
+        <td>
+          <label class="flex gap-8" style="cursor:pointer">
+            <input type="checkbox" data-twofa="${s.id}" data-phone="${escapeHtml(s.phone||'')}" ${s.otp_2fa_enabled?'checked':''} style="width:auto">
+            <span class="badge ${s.otp_2fa_enabled?'green':'grey'}">${s.otp_2fa_enabled?'On':'Off'}</span>
+          </label>
+        </td>
         <td class="flex gap-8">
           ${s.id!==state.staff.id ? `<button class="btn btn-secondary btn-sm" data-toggle="${s.id}" data-active="${s.active}">${s.active?'Deactivate':'Activate'}</button>
           <button class="btn btn-danger btn-sm" data-delete="${s.id}">Delete</button>` : `<span class="muted">You</span>`}
         </td>
-      </tr>`).join("") || `<tr><td colspan="5" class="empty-state">No staff yet.</td></tr>`;
+      </tr>`).join("") || `<tr><td colspan="6" class="empty-state">No staff yet.</td></tr>`;
 
     tbody.querySelectorAll("[data-role]").forEach(sel => sel.addEventListener("change", async () => {
       try { await callAdminFn("update_role", { id: sel.dataset.role, role: sel.value }); toast("Role updated.", "success"); }
@@ -2049,6 +2584,24 @@ VIEWS.staff = async function(content) {
       if (!confirm("Permanently delete this staff login? This cannot be undone.")) return;
       try { await callAdminFn("delete", { id: btn.dataset.delete }); toast("Deleted.", "success"); load(); }
       catch (err) { toast(err.message, "error"); }
+    }));
+    // Works for the admin's own row too, on purpose - an admin must be able
+    // to turn WhatsApp OTP 2FA on for their own login, not just for others.
+    tbody.querySelectorAll("[data-twofa]").forEach(cb => cb.addEventListener("change", async () => {
+      const id = cb.dataset.twofa;
+      if (cb.checked) {
+        const entered = prompt(`WhatsApp phone number to send 2FA codes to${cb.dataset.phone ? ` (currently ${cb.dataset.phone})` : ''}:`, cb.dataset.phone || "");
+        if (!entered || !entered.trim()) { cb.checked = false; return; }
+        try {
+          await callAdminFn("update_2fa", { id, otp_2fa_enabled: true, phone: normalizePhone(entered.trim()) });
+          toast("2FA enabled.", "success"); load();
+        } catch (err) { cb.checked = false; toast(err.message, "error"); }
+      } else {
+        try {
+          await callAdminFn("update_2fa", { id, otp_2fa_enabled: false });
+          toast("2FA disabled.", "success"); load();
+        } catch (err) { cb.checked = true; toast(err.message, "error"); }
+      }
     }));
   }
   await load();
@@ -2181,6 +2734,56 @@ VIEWS.data = async function(content) {
   });
 };
 
+/* ======================================================================
+   TRASH (admin only) — soft-deleted rows across patients, appointments,
+   invoices, payments and feedback. Restoring just clears deleted_at;
+   permanent purge of anything older than 7 days is handled by a separate
+   n8n job, not by this dashboard.
+   ====================================================================== */
+const TRASH_TYPE_LABELS = { patients: "Patient", appointments: "Appointment", invoices: "Invoice", payments: "Payment", feedback: "Feedback" };
+
+VIEWS.trash = async function(content) {
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Trash</div></div>
+      <p class="muted mb-8" style="font-size:12px">Deleted items are kept for 7 days, then permanently and automatically removed. Restore anything that shouldn't have been deleted.</p>
+      <table><thead><tr><th>Type</th><th>Item</th><th>Deleted</th><th>Time Left</th><th></th></tr></thead>
+      <tbody id="trashTbody"><tr><td colspan="5" class="empty-state">Loading…</td></tr></tbody></table>
+    </div>`;
+
+  async function load() {
+    const [pat, appt, inv, pay, fb] = await Promise.all([
+      sb.from("patients").select("id,name,phone,deleted_at").not("deleted_at", "is", null),
+      sb.from("appointments").select("id,slot_time,deleted_at,patient:patients(name)").not("deleted_at", "is", null),
+      sb.from("invoices").select("id,description,amount,deleted_at,patient:patients(name)").not("deleted_at", "is", null),
+      sb.from("payments").select("id,amount,method,deleted_at,patient:patients(name)").not("deleted_at", "is", null),
+      sb.from("feedback").select("id,rating,deleted_at,patient:patients(name)").not("deleted_at", "is", null),
+    ]);
+    const rows = [
+      ...(pat.data || []).map(r => ({ table: "patients", id: r.id, label: r.name || r.phone || "Patient", deleted_at: r.deleted_at })),
+      ...(appt.data || []).map(r => ({ table: "appointments", id: r.id, label: `${fmtDate(r.slot_time)} — ${r.patient?.name || 'Unknown patient'}`, deleted_at: r.deleted_at })),
+      ...(inv.data || []).map(r => ({ table: "invoices", id: r.id, label: `${r.description || 'Invoice'} (${fmtMoney(r.amount)}) — ${r.patient?.name || 'Unknown patient'}`, deleted_at: r.deleted_at })),
+      ...(pay.data || []).map(r => ({ table: "payments", id: r.id, label: `${fmtMoney(r.amount)} via ${r.method || '—'} — ${r.patient?.name || 'Unknown patient'}`, deleted_at: r.deleted_at })),
+      ...(fb.data || []).map(r => ({ table: "feedback", id: r.id, label: `Feedback — ${r.patient?.name || 'Unknown patient'}${r.rating ? ` (${r.rating}★)` : ''}`, deleted_at: r.deleted_at })),
+    ].sort((a, b) => new Date(b.deleted_at) - new Date(a.deleted_at));
+
+    const tbody = document.getElementById("trashTbody");
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td>${TRASH_TYPE_LABELS[r.table]}</td>
+        <td>${escapeHtml(r.label)}</td>
+        <td>${fmtDate(r.deleted_at)}</td>
+        <td>${timeLeftLabel(r.deleted_at)}</td>
+        <td><button class="btn btn-secondary btn-sm" data-restore-table="${r.table}" data-restore-id="${r.id}">Restore</button></td>
+      </tr>`).join("") || `<tr><td colspan="5" class="empty-state">Trash is empty.</td></tr>`;
+
+    tbody.querySelectorAll("[data-restore-id]").forEach(btn => {
+      btn.addEventListener("click", () => restoreFromTrash(btn.dataset.restoreTable, btn.dataset.restoreId, load));
+    });
+  }
+  await load();
+};
+
 /* ---------------------------------------------------------------------
    INIT
    --------------------------------------------------------------------- */
@@ -2188,6 +2791,48 @@ document.getElementById("loginForm").addEventListener("submit", handleLogin);
 document.getElementById("signOutBtn").addEventListener("click", () => handleSignOut());
 document.getElementById("topSignOutBtn").addEventListener("click", () => handleSignOut());
 document.getElementById("changePasswordBtn").addEventListener("click", openChangePasswordModal);
+
+document.getElementById("otpForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const code = document.getElementById("otpCode").value.trim();
+  const btn = document.getElementById("otpVerifyBtn");
+  const errEl = document.getElementById("otpError");
+  errEl.textContent = "";
+  btn.disabled = true; btn.textContent = "Verifying…";
+  try {
+    const result = await call2faFn(EDGE_2FA_VERIFY_URL, { code });
+    if (result && result.ok) {
+      document.getElementById("otpScreen").style.display = "none";
+      enterApp();
+    } else {
+      errEl.textContent = (result && result.message) || "Incorrect code. Please try again.";
+      document.getElementById("otpCode").value = "";
+      document.getElementById("otpCode").focus();
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = "Verify";
+  }
+});
+document.getElementById("otpResendLink").addEventListener("click", async e => {
+  e.preventDefault();
+  const link = e.currentTarget;
+  if (link.dataset.disabled === "true") return;
+  link.dataset.disabled = "true";
+  link.style.opacity = "0.5"; link.style.pointerEvents = "none";
+  const result = await call2faFn(EDGE_2FA_REQUEST_URL, {});
+  if (result && result.error) toast(result.message || "Could not resend code.", "error");
+  else toast("Code resent.", "success");
+  setTimeout(() => { link.dataset.disabled = "false"; link.style.opacity = ""; link.style.pointerEvents = ""; }, 18000);
+});
+document.getElementById("otpCancelLink").addEventListener("click", async e => {
+  e.preventDefault();
+  state.session = null; state.staff = null;
+  document.getElementById("otpScreen").style.display = "none";
+  document.getElementById("loginScreen").style.display = "flex";
+  document.getElementById("loginError").textContent = "";
+  await sb.auth.signOut();
+});
+
 bootstrapSession();
 </script>
 </body>
