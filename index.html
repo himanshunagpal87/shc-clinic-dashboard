@@ -372,6 +372,7 @@ const NAV_ITEMS = [
   { key: "staff", label: "Staff & Users", icon: "🔑", roles: ["admin"] },
   { key: "data", label: "Import / Export / Backup", icon: "🗂️", roles: ["admin"] },
   { key: "trash", label: "Trash", icon: "🗑️", roles: ["admin"] },
+  { key: "auditLog", label: "Audit Log", icon: "📜", roles: ["admin"] },
 ];
 
 /* ---------------------------------------------------------------------
@@ -606,6 +607,52 @@ function wirePatientCombobox(root, patients) {
     list.innerHTML = matches.slice(0, 50).map(p =>
       `<div class="combobox-item" data-id="${p.id}" data-label="${escapeHtml(p.name)} — ${escapeHtml(p.phone||'')}">${escapeHtml(p.name)} <span class="muted">${escapeHtml(p.phone||'')}</span></div>`
     ).join("") || `<div class="combobox-empty">No matching patients</div>`;
+    list.hidden = false;
+    list.querySelectorAll('.combobox-item').forEach(item => {
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        hidden.value = item.dataset.id;
+        input.value = item.dataset.label;
+        list.hidden = true;
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
+  }
+  input.addEventListener('focus', () => render(input.value));
+  input.addEventListener('input', () => { hidden.value = ''; render(input.value); hidden.dispatchEvent(new Event('change', { bubbles: true })); });
+  input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; }, 150));
+}
+
+/* ---------------------------------------------------------------------
+   SEARCHABLE STAFF COMBOBOX — same markup/wiring pattern as the patient
+   combobox above, scoped with its own data attribute so both can appear
+   on the same page without colliding. Used by the Audit Log "staff
+   member" filter (a caller may inject a synthetic {id:"system",...}
+   entry into the list to let admins filter for automated/system writes).
+   --------------------------------------------------------------------- */
+function staffComboboxHtml(staffList, opts) {
+  opts = opts || {};
+  const label = opts.label || "Staff Member";
+  return `
+    <div class="field combobox" data-staff-combobox>
+      <label>${escapeHtml(label)}</label>
+      <input type="text" class="combobox-input" placeholder="Search by staff name…" autocomplete="off">
+      <input type="hidden" name="${opts.name || 'staff_id'}">
+      <div class="combobox-list" hidden></div>
+    </div>`;
+}
+function wireStaffCombobox(root, staffList) {
+  const wrap = root.querySelector('[data-staff-combobox]');
+  if (!wrap) return;
+  const input = wrap.querySelector('.combobox-input');
+  const hidden = wrap.querySelector('input[type="hidden"]');
+  const list = wrap.querySelector('.combobox-list');
+  function render(term) {
+    const t = term.trim().toLowerCase();
+    const matches = !t ? staffList : staffList.filter(s => (s.name||'').toLowerCase().includes(t));
+    list.innerHTML = matches.slice(0, 50).map(s =>
+      `<div class="combobox-item" data-id="${s.id}" data-label="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>`
+    ).join("") || `<div class="combobox-empty">No matching staff</div>`;
     list.hidden = false;
     list.querySelectorAll('.combobox-item').forEach(item => {
       item.addEventListener('mousedown', e => {
@@ -926,6 +973,7 @@ const PAGE_META = {
   staff: ["Staff & Users", "Manage dashboard logins and roles"],
   data: ["Import / Export / Backup", "Bulk data tools"],
   trash: ["Trash", "Deleted records — restore within 7 days, then permanently purged"],
+  auditLog: ["Audit Log", "Who changed what, and when — every write to patients, appointments, invoices, payments, feedback and staff"],
   patientProfile: ["Patient", ""],
 };
 
@@ -2783,6 +2831,134 @@ VIEWS.trash = async function(content) {
   }
   await load();
 };
+
+/* ======================================================================
+   AUDIT LOG (admin only). Every write to patients/appointments/invoices/
+   payments/feedback/staff is logged automatically by DB triggers - this
+   view only ever reads audit_log, it never writes to it. RLS already
+   restricts SELECT to admins; the nav item above is gated the same way
+   Trash is, so this is just the matching UI-side restriction.
+   ====================================================================== */
+const AUDIT_TABLE_LABELS = { patients: "Patients", appointments: "Appointments", invoices: "Invoices", payments: "Payments", feedback: "Feedback", staff: "Staff" };
+const AUDIT_ACTIONS = ["insert","update","soft_delete","restore","delete"];
+function auditActionBadge(action) {
+  const map = { insert: "green", restore: "green", update: "grey", soft_delete: "red", delete: "red" };
+  return `<span class="badge ${map[action]||'grey'}">${escapeHtml((action||'').replace(/_/g,' '))}</span>`;
+}
+function auditActorLabel(r) {
+  return r.actor_staff_id ? escapeHtml(r.actor?.name || '—') : "System (automation)";
+}
+// Best-effort human label for which record a row touched, using only the
+// already-fetched old/new jsonb - no extra queries, not meant to be exhaustive.
+function auditRecordLabel(row) {
+  const vals = row.new_values || row.old_values || {};
+  if (row.table_name === "patients" && vals.name) return vals.name;
+  if (row.table_name === "appointments" && vals.slot_time) return fmtDate(vals.slot_time);
+  return `#${row.record_id}`;
+}
+
+VIEWS.auditLog = async function(content) {
+  if (!can("admin")) {
+    content.innerHTML = `<div class="panel"><p class="empty-state">You don't have access to this page.</p></div>`;
+    return;
+  }
+  const { data: staffForFilter } = await sb.from("staff").select("id,name").order("name");
+  const staffFilterOptions = [{ id: "system", name: "System (automation)" }, ...(staffForFilter||[])];
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head" style="align-items:flex-end">
+        <div class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+          <div class="field" style="margin-bottom:0;min-width:135px"><label>From</label><input type="date" id="auditDateFrom"></div>
+          <div class="field" style="margin-bottom:0;min-width:135px"><label>To</label><input type="date" id="auditDateTo"></div>
+          <div class="field" style="margin-bottom:0;min-width:150px">
+            <label>Table</label>
+            <select id="auditTableFilter">
+              <option value="">All tables</option>
+              ${Object.keys(AUDIT_TABLE_LABELS).map(t=>`<option value="${t}">${AUDIT_TABLE_LABELS[t]}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:0;min-width:150px">
+            <label>Action</label>
+            <select id="auditActionFilter">
+              <option value="">All actions</option>
+              ${AUDIT_ACTIONS.map(a=>`<option value="${a}">${escapeHtml(a.replace(/_/g,' '))}</option>`).join("")}
+            </select>
+          </div>
+          <div style="margin-bottom:0;min-width:220px">${staffComboboxHtml(staffFilterOptions, { label: "Staff Member", name: "actor_staff_id" })}</div>
+          <button type="button" class="btn btn-secondary btn-sm" id="clearAuditFiltersBtn">Clear filters</button>
+        </div>
+      </div>
+      <table><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Table</th><th>Record</th><th></th></tr></thead>
+      <tbody id="auditTbody"><tr><td colspan="6" class="empty-state">Loading…</td></tr></tbody></table>
+    </div>`;
+  wireStaffCombobox(content, staffFilterOptions);
+
+  const filters = { table: "", action: "", actor: "", dateFrom: "", dateTo: "" };
+  let rows = [];
+
+  async function load() {
+    let q = sb.from("audit_log").select("*, actor:staff(name)").order("created_at",{ascending:false}).limit(200);
+    if (filters.table) q = q.eq("table_name", filters.table);
+    if (filters.action) q = q.eq("action", filters.action);
+    if (filters.actor === "system") q = q.is("actor_staff_id", null);
+    else if (filters.actor) q = q.eq("actor_staff_id", filters.actor);
+    if (filters.dateFrom) q = q.gte("created_at", new Date(filters.dateFrom + "T00:00:00").toISOString());
+    if (filters.dateTo) q = q.lte("created_at", new Date(filters.dateTo + "T23:59:59.999").toISOString());
+    const { data, error } = await q;
+    const tbody = document.getElementById("auditTbody");
+    if (error) { tbody.innerHTML = `<tr><td colspan="6">Error: ${escapeHtml(error.message)}</td></tr>`; return; }
+    rows = data || [];
+    tbody.innerHTML = rows.map(r => `
+      <tr class="clickable" data-id="${r.id}">
+        <td>${fmtDate(r.created_at)}</td>
+        <td>${auditActorLabel(r)}</td>
+        <td>${auditActionBadge(r.action)}</td>
+        <td>${AUDIT_TABLE_LABELS[r.table_name] || escapeHtml(r.table_name)}</td>
+        <td>${escapeHtml(auditRecordLabel(r))}</td>
+        <td>→</td>
+      </tr>`).join("") || `<tr><td colspan="6" class="empty-state">No audit entries found.</td></tr>`;
+    tbody.querySelectorAll("tr[data-id]").forEach(tr => {
+      tr.addEventListener("click", () => {
+        const row = rows.find(x => String(x.id) === tr.getAttribute("data-id"));
+        if (row) openAuditDetailModal(row);
+      });
+    });
+  }
+  await load();
+  document.getElementById("auditDateFrom").addEventListener("change", e => { filters.dateFrom = e.target.value; load(); });
+  document.getElementById("auditDateTo").addEventListener("change", e => { filters.dateTo = e.target.value; load(); });
+  document.getElementById("auditTableFilter").addEventListener("change", e => { filters.table = e.target.value; load(); });
+  document.getElementById("auditActionFilter").addEventListener("change", e => { filters.action = e.target.value; load(); });
+  content.querySelector('[data-staff-combobox] input[type="hidden"]').addEventListener("change", e => { filters.actor = e.target.value; load(); });
+  document.getElementById("clearAuditFiltersBtn").addEventListener("click", () => {
+    filters.table = ""; filters.action = ""; filters.actor = ""; filters.dateFrom = ""; filters.dateTo = "";
+    document.getElementById("auditDateFrom").value = ""; document.getElementById("auditDateTo").value = "";
+    document.getElementById("auditTableFilter").value = ""; document.getElementById("auditActionFilter").value = "";
+    const combo = content.querySelector('[data-staff-combobox]');
+    combo.querySelector('.combobox-input').value = ""; combo.querySelector('input[type="hidden"]').value = "";
+    load();
+  });
+};
+
+function openAuditDetailModal(row) {
+  const before = row.old_values ? JSON.stringify(row.old_values, null, 2) : "—";
+  const after = row.new_values ? JSON.stringify(row.new_values, null, 2) : "—";
+  const pre = "background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:360px;overflow-y:auto";
+  openModal(`Audit Entry — ${AUDIT_TABLE_LABELS[row.table_name] || row.table_name} #${row.record_id}`, `
+    <p class="muted mb-16" style="font-size:12px">${fmtDate(row.created_at)} &middot; ${auditActorLabel(row)} &middot; ${auditActionBadge(row.action)}</p>
+    <div class="grid grid-2">
+      <div>
+        <div class="stat-label mb-8">Before</div>
+        <pre style="${pre}">${escapeHtml(before)}</pre>
+      </div>
+      <div>
+        <div class="stat-label mb-8">After</div>
+        <pre style="${pre}">${escapeHtml(after)}</pre>
+      </div>
+    </div>
+    <div class="modal-actions"><button type="button" class="btn btn-secondary" id="closeAuditDetailBtn">Close</button></div>`, { wide: true });
+  document.getElementById("closeAuditDetailBtn").addEventListener("click", closeModal);
+}
 
 /* ---------------------------------------------------------------------
    INIT
