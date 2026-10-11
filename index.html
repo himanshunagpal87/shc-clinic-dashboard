@@ -229,6 +229,14 @@
   .flex { display:flex; align-items:center; }
   .gap-8 { gap:8px; } .gap-12 { gap:12px; }
   .mb-8 { margin-bottom:8px; } .mb-16 { margin-bottom:16px; }
+
+  /* ---------- SIMPLE BAR CHART (Analytics) - no charting library ---------- */
+  .bar-chart { display:flex; align-items:flex-end; gap:10px; overflow-x:auto; padding-top:6px; }
+  .bar-col { display:flex; flex-direction:column; align-items:center; min-width:46px; flex:1; }
+  .bar-value { font-size:11px; color:var(--text-soft); margin-bottom:6px; white-space:nowrap; }
+  .bar-track { width:100%; max-width:34px; height:140px; background:var(--surface); border:1px solid var(--border); border-radius:6px; display:flex; align-items:flex-end; overflow:hidden; }
+  .bar-fill { width:100%; background:var(--accent); border-radius:6px 6px 0 0; transition:height .2s ease; min-height:2px; }
+  .bar-label { font-size:10.5px; color:var(--text-muted); margin-top:6px; text-align:center; }
 </style>
 </head>
 <body>
@@ -367,6 +375,7 @@ const NAV_ITEMS = [
   { key: "billing", label: "Billing & Payments", icon: "💳", roles: ["admin","doctor","reception","billing","front_office"] },
   { key: "feedback", label: "Feedback & Escalations", icon: "⚠️", roles: ["admin","doctor"] },
   { key: "reports", label: "Reports", icon: "📄", roles: ["admin","doctor"] },
+  { key: "analytics", label: "Analytics", icon: "📈", roles: ["admin","doctor"] },
   { key: "closures", label: "Closures & Holidays", icon: "🗓️", roles: ["admin","doctor","reception","front_office"] },
   { key: "articles", label: "Website Articles", icon: "📝", roles: ["admin","doctor","marketing"] },
   { key: "staff", label: "Staff & Users", icon: "🔑", roles: ["admin"] },
@@ -968,6 +977,7 @@ const PAGE_META = {
   billing: ["Billing & Payments", "Invoices and payments"],
   feedback: ["Feedback & Escalations", "Ratings and follow-ups"],
   reports: ["Reports", "Patient report links"],
+  analytics: ["Analytics", "Revenue, appointments, feedback and patient trends"],
   closures: ["Closures & Holidays", "Days the clinic or a doctor is closed - blocks bookings and shows a notice on the website"],
   articles: ["Website Articles", "Write, review and schedule articles for shivwikholisticcare.com"],
   staff: ["Staff & Users", "Manage dashboard logins and roles"],
@@ -2190,6 +2200,190 @@ VIEWS.reports = async function(content) {
         </tr>`).join("") || `<tr><td colspan="5" class="empty-state">No reports yet.</td></tr>`}
       </tbody></table>
     </div>`;
+};
+
+/* ======================================================================
+   ANALYTICS (admin/doctor) — read-only aggregates over existing tables,
+   no new tables. Fetches the date-range slice per card and aggregates in
+   JS (same spirit as VIEWS.home's stat cards), since these are small
+   clinic-scale datasets and a few lines of JS is clearer than hand-rolled
+   SQL grouping.
+   ====================================================================== */
+function barChartHtml(items, opts) {
+  opts = opts || {};
+  const max = opts.max || Math.max(1, ...items.map(i => i.value));
+  const fmt = opts.fmt || (v => v);
+  return `<div class="bar-chart">
+    ${items.map(i => `
+      <div class="bar-col">
+        <div class="bar-value">${escapeHtml(String(fmt(i.value)))}</div>
+        <div class="bar-track"><div class="bar-fill" style="height:${max ? Math.round((i.value/max)*100) : 0}%"></div></div>
+        <div class="bar-label">${escapeHtml(i.label)}</div>
+      </div>`).join("")}
+  </div>`;
+}
+// Local calendar-month key/label for a timestamp - deliberately uses the
+// browser's local time (like the rest of this file's ad-hoc date math,
+// e.g. timeLeftLabel) rather than UTC slicing, so monthly buckets line up
+// with what staff see in fmtDate elsewhere on this page.
+function monthKey(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+function monthLabel(key) {
+  const [y, m] = key.split('-');
+  return new Date(Number(y), Number(m)-1, 1).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+}
+function monthRange(fromStr, toStr) {
+  const months = [];
+  const d = new Date(fromStr + "T00:00:00"); d.setDate(1);
+  const end = new Date(toStr + "T00:00:00");
+  while (d <= end) { months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`); d.setMonth(d.getMonth()+1); }
+  return months;
+}
+
+VIEWS.analytics = async function(content) {
+  const todayStr = todayIST();
+  const defaultFrom = new Date(); defaultFrom.setMonth(defaultFrom.getMonth() - 6);
+  const defaultFromStr = defaultFrom.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head" style="align-items:flex-end">
+        <div class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+          <div class="field" style="margin-bottom:0;min-width:135px"><label>From</label><input type="date" id="anaDateFrom" value="${defaultFromStr}"></div>
+          <div class="field" style="margin-bottom:0;min-width:135px"><label>To</label><input type="date" id="anaDateTo" value="${todayStr}"></div>
+        </div>
+      </div>
+    </div>
+    <div id="anaBody"><div class="empty-state">Loading…</div></div>`;
+
+  async function load() {
+    const fromStr = document.getElementById("anaDateFrom").value || defaultFromStr;
+    const toStr = document.getElementById("anaDateTo").value || todayStr;
+    const fromISO = new Date(fromStr + "T00:00:00").toISOString();
+    const toISO = new Date(toStr + "T23:59:59.999").toISOString();
+    const months = monthRange(fromStr, toStr);
+
+    const [paymentsRes, apptsRes, feedbackRes, allApptsRes] = await Promise.all([
+      sb.from("payments").select("amount,created_at").is("deleted_at", null).gte("created_at", fromISO).lte("created_at", toISO),
+      sb.from("appointments").select("status,doctor_id,patient_id,slot_time,doctor:doctors(name)").is("deleted_at", null).gte("slot_time", fromISO).lte("slot_time", toISO),
+      sb.from("feedback").select("rating,requested_at").is("deleted_at", null).not("rating", "is", null).gte("requested_at", fromISO).lte("requested_at", toISO),
+      // Unbounded on purpose (not .limit(...) like the list views): to tell
+      // new vs returning patients correctly we need every appointment up to
+      // `to`, not just the ones inside the selected window.
+      sb.from("appointments").select("patient_id,slot_time").is("deleted_at", null).lte("slot_time", toISO),
+    ]);
+
+    const body = document.getElementById("anaBody");
+    const err = paymentsRes.error || apptsRes.error || feedbackRes.error || allApptsRes.error;
+    if (err) { body.innerHTML = `<div class="panel"><p style="color:var(--red)">Failed to load: ${escapeHtml(err.message)}</p></div>`; return; }
+
+    // 1. Revenue over time
+    const revenueByMonth = {};
+    months.forEach(m => revenueByMonth[m] = 0);
+    (paymentsRes.data || []).forEach(p => {
+      const m = monthKey(p.created_at);
+      if (m in revenueByMonth) revenueByMonth[m] += Number(p.amount || 0);
+    });
+    const revenueItems = months.map(m => ({ label: monthLabel(m), value: revenueByMonth[m] }));
+    const totalRevenue = revenueItems.reduce((s, i) => s + i.value, 0);
+
+    // 2. Appointments by status  +  4. No-show rate
+    const byStatus = {};
+    (apptsRes.data || []).forEach(a => { byStatus[a.status] = (byStatus[a.status] || 0) + 1; });
+    const totalAppts = (apptsRes.data || []).length;
+    const missedCount = byStatus["missed"] || 0;
+    const noShowRate = totalAppts ? (missedCount / totalAppts * 100) : 0;
+
+    // 3. Appointments by doctor
+    const byDoctor = {};
+    (apptsRes.data || []).forEach(a => {
+      const name = a.doctor?.name || "Unassigned";
+      byDoctor[name] = (byDoctor[name] || 0) + 1;
+    });
+    const doctorRows = Object.entries(byDoctor).sort((a, b) => b[1] - a[1]);
+
+    // 5. Feedback rating trend
+    const ratingSumByMonth = {}, ratingCountByMonth = {};
+    months.forEach(m => { ratingSumByMonth[m] = 0; ratingCountByMonth[m] = 0; });
+    let overallSum = 0, overallCount = 0;
+    (feedbackRes.data || []).forEach(f => {
+      const m = monthKey(f.requested_at);
+      if (m in ratingSumByMonth) { ratingSumByMonth[m] += f.rating; ratingCountByMonth[m]++; }
+      overallSum += f.rating; overallCount++;
+    });
+    const ratingItems = months.map(m => ({ label: monthLabel(m), value: ratingCountByMonth[m] ? +(ratingSumByMonth[m] / ratingCountByMonth[m]).toFixed(2) : 0 }));
+    const overallAvgRating = overallCount ? (overallSum / overallCount).toFixed(1) : "—";
+
+    // 6. New vs returning patients — compute each patient's first-ever
+    // appointment month from the full history, then bucket every
+    // in-window appointment as new (first month === this month) or
+    // returning (first month earlier), counting each patient once/month.
+    const firstApptMonth = {};
+    (allApptsRes.data || []).forEach(a => {
+      const m = monthKey(a.slot_time);
+      if (!firstApptMonth[a.patient_id] || m < firstApptMonth[a.patient_id]) firstApptMonth[a.patient_id] = m;
+    });
+    const newByMonth = {}, returningByMonth = {};
+    months.forEach(m => { newByMonth[m] = new Set(); returningByMonth[m] = new Set(); });
+    (allApptsRes.data || []).forEach(a => {
+      // Bucketing must respect the exact from/to boundary, not just calendar-
+      // month membership - otherwise an appointment just before `from` (but
+      // in the same partial month) would be wrongly counted.
+      if (a.slot_time < fromISO || a.slot_time > toISO) return;
+      const m = monthKey(a.slot_time);
+      if (!(m in newByMonth)) return; // outside the selected window
+      if (firstApptMonth[a.patient_id] === m) newByMonth[m].add(a.patient_id);
+      else returningByMonth[m].add(a.patient_id);
+    });
+    const nvrItems = months.map(m => ({ month: monthLabel(m), newCount: newByMonth[m].size, returningCount: returningByMonth[m].size }));
+
+    body.innerHTML = `
+      <div class="grid grid-3 mb-16">
+        <div class="stat-card"><div class="stat-label">Revenue (period)</div><div class="stat-value green">${fmtMoney(totalRevenue)}</div></div>
+        <div class="stat-card"><div class="stat-label">No-Show Rate</div><div class="stat-value ${noShowRate > 10 ? 'red' : 'green'}">${noShowRate.toFixed(1)}%</div></div>
+        <div class="stat-card"><div class="stat-label">Avg Feedback Rating</div><div class="stat-value yellow">${overallAvgRating} ★</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">Revenue Over Time</div></div>
+        ${barChartHtml(revenueItems, { fmt: v => fmtMoney(v) })}
+      </div>
+
+      <div class="grid grid-2 mb-16">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">Appointments by Status</div></div>
+          <table><thead><tr><th>Status</th><th>Count</th></tr></thead>
+          <tbody>${Object.keys(byStatus).length ? Object.entries(byStatus).sort((a, b) => b[1] - a[1]).map(([s, c]) => `
+            <tr><td>${statusBadge(s)}</td><td>${c}</td></tr>`).join("") : `<tr><td colspan="2" class="empty-state">No appointments in this period.</td></tr>`}
+          </tbody></table>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">Appointments by Doctor</div></div>
+          <table><thead><tr><th>Doctor</th><th>Count</th></tr></thead>
+          <tbody>${doctorRows.length ? doctorRows.map(([name, c]) => `<tr><td>${escapeHtml(name)}</td><td>${c}</td></tr>`).join("") : `<tr><td colspan="2" class="empty-state">No appointments in this period.</td></tr>`}
+          </tbody></table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">Feedback Rating Trend</div></div>
+        ${barChartHtml(ratingItems, { fmt: v => v ? v.toFixed(1) + '★' : '—', max: 5 })}
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">New vs Returning Patients</div></div>
+        <table><thead><tr><th>Month</th><th>New</th><th>Returning</th></tr></thead>
+        <tbody>${nvrItems.map(r => `<tr><td>${r.month}</td><td><span class="badge green">${r.newCount}</span></td><td><span class="badge grey">${r.returningCount}</span></td></tr>`).join("") || `<tr><td colspan="3" class="empty-state">No data in this period.</td></tr>`}
+        </tbody></table>
+      </div>`;
+  }
+
+  await load();
+  document.getElementById("anaDateFrom").addEventListener("change", load);
+  document.getElementById("anaDateTo").addEventListener("change", load);
 };
 
 /* ======================================================================
