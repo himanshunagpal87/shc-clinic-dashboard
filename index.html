@@ -418,6 +418,7 @@ const INBOX_ROLES = ["admin","doctor","reception","front_office"];
 const NAV_ITEMS = [
   { key: "home", label: "Dashboard", icon: "📊", roles: ["admin","doctor","reception","billing","front_office"] },
   { key: "patients", label: "Patients", icon: "🧑‍🤝‍🧑", roles: ["admin","doctor","reception","billing","front_office"] },
+  { key: "duplicates", label: "Duplicates", icon: "👥", roles: ["admin","doctor","reception","front_office"] },
   { key: "appointments", label: "Appointments", icon: "📅", roles: ["admin","doctor","reception","front_office"] },
   { key: "chats", label: "Chats", icon: "💬", roles: INBOX_ROLES },
   { key: "clinical", label: "Clinical Records", icon: "🩺", roles: ["admin","doctor"] },
@@ -427,6 +428,9 @@ const NAV_ITEMS = [
   { key: "reports", label: "Reports", icon: "📄", roles: ["admin","doctor"] },
   { key: "analytics", label: "Analytics", icon: "📈", roles: ["admin","doctor"] },
   { key: "closures", label: "Closures & Holidays", icon: "🗓️", roles: ["admin","doctor","reception","front_office"] },
+  { key: "vendors", label: "Vendors", icon: "📇", roles: ["admin","doctor","reception","front_office"] },
+  { key: "leads", label: "Leads", icon: "📥", roles: ["admin","doctor","reception","front_office"] },
+  { key: "calls", label: "Calls", icon: "📞", roles: ["admin","doctor","reception","front_office"] },
   { key: "articles", label: "Website Articles", icon: "📝", roles: ["admin","doctor","marketing"] },
   { key: "staff", label: "Staff & Users", icon: "🔑", roles: ["admin"] },
   { key: "data", label: "Import / Export / Backup", icon: "🗂️", roles: ["admin"] },
@@ -879,6 +883,23 @@ function enterApp() {
   navigate(NAV_ITEMS.find(n => n.roles.includes(state.staff.role))?.key || "home");
   startIdleTimer();
   startInboxWatcher();
+  startCallsBadgeWatcher();
+}
+
+async function refreshCallsBadge() {
+  if (!can("admin","doctor","reception","front_office")) return;
+  const { count } = await sb.from("phone_calls").select("id", { count: "exact", head: true })
+    .eq("event", "missed").eq("resolved", false);
+  const el = document.querySelector('[data-nav="calls"]');
+  if (!el) return;
+  let b = el.querySelector(".nav-badge");
+  if (!count) { if (b) b.remove(); return; }
+  if (!b) { b = document.createElement("span"); b.className = "nav-badge"; el.appendChild(b); }
+  b.textContent = count > 99 ? "99+" : count;
+}
+function startCallsBadgeWatcher() {
+  refreshCallsBadge();
+  setInterval(refreshCallsBadge, 60000);
 }
 
 /* ---------------------------------------------------------------------
@@ -1028,6 +1049,7 @@ function renderNav() {
       <span class="nav-icon">${n.icon}</span><span class="nav-label">${n.label}</span>
     </div>`).join("");
   updateChatsBadge();
+  refreshDuplicatesCount();
   nav.querySelectorAll("[data-nav]").forEach(el => {
     el.addEventListener("click", () => { closeMobileNav(); navigate(el.getAttribute("data-nav")); });
   });
@@ -1036,6 +1058,7 @@ function renderNav() {
 const PAGE_META = {
   home: ["Dashboard", "Today at a glance"],
   patients: ["Patients", "Search, add and manage patient records"],
+  duplicates: ["Duplicates", "Suspected duplicate patients: merge them or mark them as different people"],
   appointments: ["Appointments", "Bookings synced from WhatsApp + walk-ins"],
   chats: ["Chats", "Live WhatsApp conversations (AI + patients)"],
   clinical: ["Clinical Records", "Medical history & treatment protocols"],
@@ -1045,6 +1068,9 @@ const PAGE_META = {
   reports: ["Reports", "Patient report links"],
   analytics: ["Analytics", "Revenue, appointments, feedback and patient trends"],
   closures: ["Closures & Holidays", "Days the clinic or a doctor is closed - blocks bookings and shows a notice on the website"],
+  vendors: ["Vendors", "Vendor contacts - synced to the \"SHC Vendors\" label in Google Contacts"],
+  leads: ["Leads", "Non-patient WhatsApp contacts (vendors, job applicants, misc) flagged by the AI for follow-up"],
+  calls: ["Calls", "Missed calls, full call log, and auto-WhatsApp outreach"],
   articles: ["Website Articles", "Write, review and schedule articles for shivwikholisticcare.com"],
   staff: ["Staff & Users", "Manage dashboard logins and roles"],
   data: ["Import / Export / Backup", "Bulk data tools"],
@@ -1117,11 +1143,19 @@ VIEWS.home = async function(content) {
 function statusBadge(status) {
   const map = {
     confirmed: "green", completed: "green", cancelled: "red", declined: "red",
-    missed: "red", pending_doctor_approval: "yellow", reschedule_pending: "yellow", pending_confirmation: "yellow",
+    missed: "red", pending_doctor_approval: "yellow", reschedule_pending: "yellow", pending_confirmation: "yellow", lapsed: "red",
   };
   return `<span class="badge ${map[status]||'grey'}">${escapeHtml((status||'').replace(/_/g,' '))}</span>`;
 }
-const APPT_STATUSES = ["confirmed","completed","cancelled","declined","missed","pending_doctor_approval","reschedule_pending","pending_confirmation"];
+const APPT_STATUSES = ["confirmed","completed","cancelled","declined","missed","pending_doctor_approval","reschedule_pending","pending_confirmation","lapsed"];
+// pending requests: when the decision is due, or that front office must phone (E1b)
+function approvalInfoHtml(a) {
+  if (a.status !== "pending_doctor_approval") return "";
+  if (a.approval_urgent) return `<div class="muted" style="font-size:11px;color:var(--red)">⚠️ URGENT: too close to approve, call the patient</div>`;
+  if (!a.approval_deadline) return "";
+  const late = new Date(a.approval_deadline) < new Date();
+  return `<div class="muted" style="font-size:11px">${late ? "⌛ deadline passed" : "⏳ decide by"} ${fmtDate(a.approval_deadline)}</div>`;
+}
 const APPT_TYPES = { clinic: "Clinic", video: "Video", home: "Home Visit" };
 function apptTypeLabel(t) { return APPT_TYPES[t] || APPT_TYPES.clinic; }
 
@@ -1185,6 +1219,11 @@ function openPatientForm(patient, onSaved) {
             <option ${p.gender==='female'?'selected':''}>female</option>
             <option ${p.gender==='male'?'selected':''}>male</option>
             <option ${p.gender==='other'?'selected':''}>other</option>
+          </select>
+        </div>
+        <div class="field"><label title="Language for automatic WhatsApp messages">Message language</label>
+          <select name="preferred_language">
+            ${[["auto","Auto (from their messages)"],["hinglish","Hinglish"],["english","English"]].map(([v,l]) => `<option value="${v}" ${(p.preferred_language||'auto')===v?'selected':''}>${l}</option>`).join("")}
           </select>
         </div>
       </div>
@@ -1398,6 +1437,264 @@ function openSendMessageModal(patient, appointment) {
   });
 }
 
+/* ======================================================================
+   CALLS (Stage D) - missed calls, call log, auto-WhatsApp outreach
+   ====================================================================== */
+function callEventLabel(c) {
+  const dur = c.duration_seconds != null ? ` (${Math.floor(c.duration_seconds/60)}m ${c.duration_seconds%60}s)` : '';
+  const labels = { missed: 'Missed', answered: 'Answered' + dur, ended_in: 'Incoming' + dur, outgoing: 'Outgoing' + dur, ended_out: 'Outgoing' + dur };
+  return labels[c.event] || c.event;
+}
+function outreachBadge(c) {
+  if (c.outreach_status === 'sent') return '<span class="badge green">WhatsApp sent</span>';
+  if (c.outreach_status === 'no_whatsapp') return '<span class="badge grey">No WhatsApp - call back</span>';
+  if (c.event !== 'missed') return '<span class="muted">—</span>';
+  return '<span class="badge yellow">Pending</span>';
+}
+VIEWS.calls = async function(content) {
+  const openOnly = state.viewParams.filter !== 'all';
+  let q = sb.from("phone_calls").select("*, patient:patients(id,name)").order("created_at",{ascending:false}).limit(200);
+  if (openOnly) q = q.eq("event","missed").eq("resolved", false);
+  const { data, error } = await q;
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">${openOnly ? 'Open Missed Calls' : 'All Calls'}</div>
+        <div><button class="btn btn-secondary btn-sm" data-calls-filter="${openOnly ? 'all' : 'open'}">${openOnly ? 'Show All Calls' : 'Show Open Missed Only'}</button></div>
+      </div>
+      <table><thead><tr><th>When</th><th>Phone / Contact</th><th>Patient</th><th>Type</th><th>Outreach</th><th>Status</th><th></th></tr></thead>
+      <tbody>${error ? `<tr><td colspan="7">Error: ${escapeHtml(error.message)}</td></tr>` :
+        (data||[]).map(c=>`<tr>
+          <td>${fmtDate(c.created_at)}</td>
+          <td>${escapeHtml(c.contact_name || c.phone || '—')}${c.phone ? ` <a href="#" data-goto-chat="${c.phone}" title="Open chat">💬</a>` : ''}</td>
+          <td>${c.patient ? `<a href="#" data-goto-patient="${c.patient.id}">${escapeHtml(c.patient.name)}</a>` : '<span class="muted">—</span>'}</td>
+          <td>${callEventLabel(c)}</td>
+          <td>${outreachBadge(c)}</td>
+          <td>${c.resolved ? `<span class="badge green">${c.called_back ? 'Called back' : 'Resolved'}</span>` : (c.event === 'missed' ? '<span class="badge red">Open</span>' : '<span class="muted">—</span>')}</td>
+          <td>${(!c.resolved && c.event === 'missed') ? `<button class="btn btn-secondary btn-sm" data-call-callback="${c.id}">Called Back</button> <button class="btn btn-secondary btn-sm" data-call-resolve="${c.id}">Resolve</button>` : ''}</td>
+        </tr>`).join("") || `<tr><td colspan="7" class="empty-state">${openOnly ? 'No open missed calls. 🎉' : 'No calls logged yet.'}</td></tr>`}
+      </tbody></table>
+    </div>`;
+  content.querySelectorAll("[data-calls-filter]").forEach(btn => btn.addEventListener("click", () => navigate("calls", { filter: btn.dataset.callsFilter })));
+  content.querySelectorAll("[data-goto-patient]").forEach(a => a.addEventListener("click", e => { e.preventDefault(); navigate("patientProfile", { id: a.dataset.gotoPatient }); }));
+  content.querySelectorAll("[data-goto-chat]").forEach(a => a.addEventListener("click", e => { e.preventDefault(); navigate("chats", { chatId: a.dataset.gotoChat + "@c.us" }); }));
+  content.querySelectorAll("[data-call-callback]").forEach(btn => btn.addEventListener("click", async () => {
+    const { error } = await sb.from("phone_calls").update({ called_back: true, resolved: true }).eq("id", btn.dataset.callCallback);
+    if (error) return toast(error.message, "error");
+    toast("Marked as called back.", "success"); refreshCallsBadge(); navigate("calls", state.viewParams);
+  }));
+  content.querySelectorAll("[data-call-resolve]").forEach(btn => btn.addEventListener("click", async () => {
+    const { error } = await sb.from("phone_calls").update({ resolved: true }).eq("id", btn.dataset.callResolve);
+    if (error) return toast(error.message, "error");
+    toast("Marked resolved.", "success"); refreshCallsBadge(); navigate("calls", state.viewParams);
+  }));
+};
+
+/* ======================================================================
+   VENDORS (Stage D4) - dashboard-managed list, synced to Google Contacts
+   ====================================================================== */
+function openConvertPatientToVendor(patient) {
+  const allowTransfer = can("admin");
+  openModal(`Convert / Copy to Vendor${patient.name ? " — " + escapeHtml(patient.name) : ""}`, `
+    <div class="field mb-8"><label>Name</label><input id="cvName" value="${escapeHtml(patient.name||'')}" /></div>
+    <div class="field mb-8"><label>Phone</label><input id="cvPhone" value="${escapeHtml(patient.phone||'')}" /></div>
+    <div class="field mb-8"><label>Category</label><input id="cvCategory" placeholder="e.g. Equipment, Supplies" /></div>
+    <div class="field mb-8"><label>Notes</label><input id="cvNotes" value="${escapeHtml(patient.notes||'')}" /></div>
+    <div class="field-hint mb-8">Copy keeps this patient record as-is. ${allowTransfer ? "Transfer also moves this patient to Trash (restorable for 7 days)." : "Only an admin can transfer (archive) the patient record — Copy is still available."}</div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+      <button type="button" class="btn btn-secondary" id="copyToVendorBtn">Copy</button>
+      ${allowTransfer ? `<button type="button" class="btn btn-primary" id="transferToVendorBtn">Transfer</button>` : ``}
+    </div>`);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  async function insertVendor() {
+    const name = document.getElementById("cvName").value.trim();
+    if (!name) { toast("Name is required.", "error"); return false; }
+    const { error } = await sb.from("vendors").insert({
+      name,
+      phone: document.getElementById("cvPhone").value.trim() || null,
+      category: document.getElementById("cvCategory").value.trim() || null,
+      notes: document.getElementById("cvNotes").value.trim() || null,
+    });
+    if (error) { toast(error.message, "error"); return false; }
+    return true;
+  }
+  document.getElementById("copyToVendorBtn").addEventListener("click", async () => {
+    if (!(await insertVendor())) return;
+    closeModal();
+    toast("Copied to Vendors.", "success");
+  });
+  const transferBtn = document.getElementById("transferToVendorBtn");
+  if (transferBtn) transferBtn.addEventListener("click", async () => {
+    if (!(await insertVendor())) return;
+    closeModal();
+    confirmSoftDelete("patients", patient.id, "Patient", () => navigate("patients"));
+  });
+}
+function openConvertVendorToPatient(vendor) {
+  openModal(`Convert / Copy to Patient${vendor.name ? " — " + escapeHtml(vendor.name) : ""}`, `
+    <div class="field mb-8"><label>Name</label><input id="cpName" value="${escapeHtml(vendor.name||'')}" /></div>
+    <div class="field mb-8"><label>Phone</label><input id="cpPhone" value="${escapeHtml(vendor.phone||'')}" /></div>
+    <div class="field mb-8"><label>Notes</label><input id="cpNotes" value="${escapeHtml(vendor.notes||'')}" /></div>
+    <div class="field-hint mb-8">Copy keeps this vendor record as-is. Transfer also deactivates this vendor.</div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+      <button type="button" class="btn btn-secondary" id="copyToPatientBtn">Copy</button>
+      <button type="button" class="btn btn-primary" id="transferToPatientBtn">Transfer</button>
+    </div>`);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  async function insertPatient() {
+    const name = document.getElementById("cpName").value.trim();
+    let phone = document.getElementById("cpPhone").value.trim();
+    if (!name || !phone) { toast("Name and phone are required.", "error"); return false; }
+    phone = normalizePhone(phone);
+    if (!isValidPhone(phone, true)) { toast(PHONE_FORMAT_MSG, "error"); return false; }
+    const { error } = await sb.from("patients").insert({
+      name,
+      phone,
+      notes: document.getElementById("cpNotes").value.trim() || null,
+    });
+    if (error) { toast(error.message, "error"); return false; }
+    return true;
+  }
+  document.getElementById("copyToPatientBtn").addEventListener("click", async () => {
+    if (!(await insertPatient())) return;
+    closeModal();
+    toast("Copied to Patients.", "success");
+  });
+  document.getElementById("transferToPatientBtn").addEventListener("click", async () => {
+    if (!(await insertPatient())) return;
+    const { error } = await sb.from("vendors").update({ active: false }).eq("id", vendor.id);
+    if (error) { toast(error.message, "error"); return; }
+    closeModal();
+    toast("Transferred to Patients; vendor deactivated.", "success");
+    navigate("vendors");
+  });
+}
+const LEAD_KIND_LABELS = { vendor: "Vendor", prospective_vendor: "Prospective Vendor", job_applicant: "Job Applicant", misc: "Misc" };
+VIEWS.leads = async function(content) {
+  const { data, error } = await sb.from("leads").select("*").order("status").order("created_at", { ascending: false });
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">Leads</div></div>
+      <table><thead><tr><th>Name</th><th>Phone</th><th>Category</th><th>Note</th><th>Status</th><th></th></tr></thead>
+      <tbody>${error ? `<tr><td colspan="6">Error: ${escapeHtml(error.message)}</td></tr>` :
+        (data||[]).map(l=>`<tr>
+          <td>${escapeHtml(l.name||'—')}</td>
+          <td>${escapeHtml(l.phone)}</td>
+          <td>${escapeHtml(LEAD_KIND_LABELS[l.kind]||l.kind)}</td>
+          <td>${escapeHtml(l.note||'—')}</td>
+          <td>${l.status === 'closed' ? '<span class="badge grey">Closed</span>' : l.status === 'contacted' ? '<span class="badge yellow">Contacted</span>' : '<span class="badge green">New</span>'}</td>
+          <td class="flex gap-8">
+            ${l.status === 'new' ? `<button class="btn btn-secondary btn-sm" data-lead-contacted="${l.id}">Mark Contacted</button>` : ``}
+            ${l.status !== 'closed' ? `<button class="btn btn-secondary btn-sm" data-lead-close="${l.id}">Close</button>` : `<button class="btn btn-secondary btn-sm" data-lead-reopen="${l.id}">Reopen</button>`}
+          </td>
+        </tr>`).join("") || `<tr><td colspan="6" class="empty-state">No leads yet.</td></tr>`}
+      </tbody></table>
+    </div>`;
+  async function setStatus(id, status) {
+    const { error } = await sb.from("leads").update({ status }).eq("id", id);
+    if (error) return toast(error.message, "error");
+    navigate("leads");
+  }
+  content.querySelectorAll("[data-lead-contacted]").forEach(btn => btn.addEventListener("click", () => setStatus(btn.dataset.leadContacted, "contacted")));
+  content.querySelectorAll("[data-lead-close]").forEach(btn => btn.addEventListener("click", () => setStatus(btn.dataset.leadClose, "closed")));
+  content.querySelectorAll("[data-lead-reopen]").forEach(btn => btn.addEventListener("click", () => setStatus(btn.dataset.leadReopen, "new")));
+};
+VIEWS.vendors = async function(content) {
+  const { data, error } = await sb.from("vendors").select("*").order("active", { ascending: false }).order("name");
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Vendors</div>
+        <div><button class="btn btn-primary btn-sm" data-vendor-add>+ Add Vendor</button></div>
+      </div>
+      <div id="vendorAddForm" style="display:none" class="panel" >
+        <div class="flex gap-8" style="flex-wrap:wrap">
+          <input id="vendorName" placeholder="Name" />
+          <input id="vendorPhone" placeholder="Phone" />
+          <input id="vendorCategory" placeholder="Category" />
+          <input id="vendorNotes" placeholder="Notes" />
+          <button class="btn btn-primary btn-sm" data-vendor-save>Save</button>
+          <button class="btn btn-secondary btn-sm" data-vendor-cancel>Cancel</button>
+        </div>
+      </div>
+      <table><thead><tr><th>Name</th><th>Phone</th><th>Category</th><th>Notes</th><th>Status</th><th></th></tr></thead>
+      <tbody>${error ? `<tr><td colspan="6">Error: ${escapeHtml(error.message)}</td></tr>` :
+        (data||[]).map(v=>`<tr data-vendor-row="${v.id}">
+          <td>${escapeHtml(v.name)}</td>
+          <td>${escapeHtml(v.phone||'—')}</td>
+          <td>${escapeHtml(v.category||'—')}</td>
+          <td>${escapeHtml(v.notes||'—')}</td>
+          <td>${v.active ? '<span class="badge green">Active</span>' : '<span class="badge grey">Inactive</span>'}</td>
+          <td class="flex gap-8">
+            <button class="btn btn-secondary btn-sm" data-vendor-edit="${v.id}">Edit</button>
+            <button class="btn btn-secondary btn-sm" data-vendor-toggle="${v.id}" data-vendor-active="${v.active}">${v.active ? 'Deactivate' : 'Reactivate'}</button>
+            <button class="btn btn-secondary btn-sm" data-vendor-to-patient="${v.id}">To Patient…</button>
+          </td>
+        </tr>`).join("") || `<tr><td colspan="6" class="empty-state">No vendors yet.</td></tr>`}
+      </tbody></table>
+    </div>`;
+  content.querySelector("[data-vendor-add]").addEventListener("click", () => {
+    document.getElementById("vendorAddForm").style.display = "";
+  });
+  content.querySelector("[data-vendor-cancel]").addEventListener("click", () => navigate("vendors"));
+  content.querySelector("[data-vendor-save]").addEventListener("click", async () => {
+    const name = document.getElementById("vendorName").value.trim();
+    if (!name) return toast("Name is required.", "error");
+    const { error } = await sb.from("vendors").insert({
+      name,
+      phone: document.getElementById("vendorPhone").value.trim() || null,
+      category: document.getElementById("vendorCategory").value.trim() || null,
+      notes: document.getElementById("vendorNotes").value.trim() || null,
+    });
+    if (error) return toast(error.message, "error");
+    toast("Vendor added.", "success");
+    navigate("vendors");
+  });
+  content.querySelectorAll("[data-vendor-toggle]").forEach(btn => btn.addEventListener("click", async () => {
+    const nowActive = btn.dataset.vendorActive === "true";
+    const { error } = await sb.from("vendors").update({ active: !nowActive }).eq("id", btn.dataset.vendorToggle);
+    if (error) return toast(error.message, "error");
+    toast(nowActive ? "Vendor deactivated." : "Vendor reactivated.", "success");
+    navigate("vendors");
+  }));
+  content.querySelectorAll("[data-vendor-to-patient]").forEach(btn => btn.addEventListener("click", () => {
+    const v = (data||[]).find(x => String(x.id) === String(btn.dataset.vendorToPatient));
+    if (v) openConvertVendorToPatient(v);
+  }));
+  content.querySelectorAll("[data-vendor-edit]").forEach(btn => btn.addEventListener("click", async () => {
+    const id = btn.dataset.vendorEdit;
+    const row = content.querySelector(`tr[data-vendor-row="${id}"]`);
+    const v = (data||[]).find(x => String(x.id) === String(id));
+    if (!v || !row) return;
+    row.innerHTML = `
+      <td><input class="vendor-edit-name" value="${escapeHtml(v.name)}" /></td>
+      <td><input class="vendor-edit-phone" value="${escapeHtml(v.phone||'')}" /></td>
+      <td><input class="vendor-edit-category" value="${escapeHtml(v.category||'')}" /></td>
+      <td><input class="vendor-edit-notes" value="${escapeHtml(v.notes||'')}" /></td>
+      <td>${v.active ? '<span class="badge green">Active</span>' : '<span class="badge grey">Inactive</span>'}</td>
+      <td class="flex gap-8">
+        <button class="btn btn-primary btn-sm" data-vendor-edit-save="${id}">Save</button>
+        <button class="btn btn-secondary btn-sm" data-vendor-edit-cancel>Cancel</button>
+      </td>`;
+    row.querySelector("[data-vendor-edit-cancel]").addEventListener("click", () => navigate("vendors"));
+    row.querySelector("[data-vendor-edit-save]").addEventListener("click", async () => {
+      const name = row.querySelector(".vendor-edit-name").value.trim();
+      if (!name) return toast("Name is required.", "error");
+      const { error } = await sb.from("vendors").update({
+        name,
+        phone: row.querySelector(".vendor-edit-phone").value.trim() || null,
+        category: row.querySelector(".vendor-edit-category").value.trim() || null,
+        notes: row.querySelector(".vendor-edit-notes").value.trim() || null,
+      }).eq("id", id);
+      if (error) return toast(error.message, "error");
+      toast("Vendor updated.", "success");
+      navigate("vendors");
+    });
+  }));
+};
+
 /* ---------------------------------------------------------------------
    PATIENT PROFILE (tabs: overview / clinical / appointments / billing)
    --------------------------------------------------------------------- */
@@ -1429,6 +1726,8 @@ VIEWS.patientProfile = async function(content) {
             <div class="flex gap-8">
               ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="sendMsgFromProfileBtn">Send Message</button>` : ``}
               ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="editPatientBtn">Edit</button>` : ``}
+              ${can("admin","doctor","reception","front_office") ? `<button class="btn btn-secondary btn-sm" id="convertToVendorBtn">To Vendor…</button>` : ``}
+              ${can("admin") ? `<button class="btn btn-secondary btn-sm" id="mergePatientBtn" title="Merge a duplicate record into this patient">Merge…</button>` : ``}
               ${can("admin") ? `<button class="btn btn-danger btn-sm" id="deletePatientBtn">Delete</button>` : ``}
             </div>
           </div>
@@ -1443,6 +1742,10 @@ VIEWS.patientProfile = async function(content) {
         </div>`;
       const editBtn = document.getElementById("editPatientBtn");
       if (editBtn) editBtn.addEventListener("click", () => openPatientForm(patient, () => navigate("patientProfile", { id })));
+      const convertBtn = document.getElementById("convertToVendorBtn");
+      if (convertBtn) convertBtn.addEventListener("click", () => openConvertPatientToVendor(patient));
+      const mergeBtn = document.getElementById("mergePatientBtn");
+      if (mergeBtn) mergeBtn.addEventListener("click", () => openManualMerge(Number(id)));
       const sendMsgBtn = document.getElementById("sendMsgFromProfileBtn");
       if (sendMsgBtn) sendMsgBtn.addEventListener("click", () => openSendMessageModal(patient, null));
       const deleteBtn = document.getElementById("deletePatientBtn");
@@ -1712,13 +2015,14 @@ VIEWS.appointments = async function(content) {
         <td>${escapeHtml(a.doctor?.name||'—')}</td>
         <td>${escapeHtml(a.service?.name||'—')}</td>
         <td>${apptTypeLabel(a.appointment_type)}</td>
-        <td>${statusBadge(a.status)}</td>
+        <td>${statusBadge(a.status)}${approvalInfoHtml(a)}</td>
         <td>${a.google_event_id ? '<span class="badge green">Synced</span>' : '<span class="badge grey">Pending</span>'}</td>
         <td>
           <div class="flex gap-8">
             ${canManage ? `<select data-id="${a.id}" class="statusSelect">
               ${["confirmed","completed","cancelled","missed"].map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
             </select>` : ``}
+            ${a.status === "pending_doctor_approval" && can("admin","doctor","front_office") ? `<button class="btn btn-primary btn-sm" data-approve="${a.id}">Approve</button><button class="btn btn-secondary btn-sm" data-decline="${a.id}">Decline</button>` : ``}
             ${canManage ? `<button class="btn btn-secondary btn-sm" data-editid="${a.id}">Edit</button>` : ``}
             ${canManage ? `<button class="btn btn-secondary btn-sm" data-msgid="${a.id}">Message</button>` : ``}
             ${can("admin") ? `<button class="btn btn-danger btn-sm" data-del-appt="${a.id}">Delete</button>` : ``}
@@ -1729,10 +2033,24 @@ VIEWS.appointments = async function(content) {
       sel.addEventListener("change", async () => {
         const payload = { status: sel.value };
         if (sel.value === "completed") payload.completed_at = new Date().toISOString();
-        const { error } = await sb.from("appointments").update(payload).eq("id", sel.dataset.id);
-        if (error) toast(error.message, "error"); else toast("Status updated.", "success");
+        const { data: upd, error } = await sb.from("appointments").update(payload).eq("id", sel.dataset.id).select("status");
+        if (error) toast(error.message, "error");
+        else if (approvalNotice(payload.status, upd)) sel.value = "pending_doctor_approval";
+        else toast("Status updated.", "success");
       });
     });
+    // E1b: approve via approve_appointment() (doctor, admin, front office); the patient is told automatically
+    tbody.querySelectorAll("[data-approve]").forEach(btn => btn.addEventListener("click", async () => {
+      const { error } = await sb.rpc("approve_appointment", { p_id: Number(btn.dataset.approve) });
+      if (error) return toast(error.message, "error");
+      toast("Approved. The patient will get a WhatsApp confirmation.", "success"); load();
+    }));
+    tbody.querySelectorAll("[data-decline]").forEach(btn => btn.addEventListener("click", async () => {
+      if (!confirm("Decline this request? The patient will be offered other free times.")) return;
+      const { error } = await sb.from("appointments").update({ status: "declined" }).eq("id", btn.dataset.decline);
+      if (error) return toast(error.message, "error");
+      toast("Declined. The patient will be offered other times on WhatsApp.", "success"); load();
+    }));
     tbody.querySelectorAll("[data-editid]").forEach(btn => {
       btn.addEventListener("click", () => {
         const appt = (data||[]).find(x => String(x.id) === btn.dataset.editid);
@@ -1806,9 +2124,9 @@ async function openAppointmentForm(onSaved) {
         if (!confirm("This doctor already has a CONFIRMED appointment at this exact time. Book anyway as a double-booking?")) return;
       }
     }
-    const { error } = await sb.from("appointments").insert(payload);
+    const { data: ins, error } = await sb.from("appointments").insert(payload).select("status");
     if (error) return toast(error.message, "error");
-    closeModal(); toast("Appointment booked.", "success"); onSaved && onSaved();
+    closeModal(); if (!approvalNotice(payload.status, ins)) toast("Appointment booked.", "success"); onSaved && onSaved();
   });
 }
 
@@ -1854,9 +2172,9 @@ async function openEditAppointmentForm(appt, onSaved) {
     payload.slot_time = new Date(payload.slot_time).toISOString();
     if (payload.appointment_type !== "home") payload.home_visit_address = null;
     if (payload.status === "completed" && appt.status !== "completed") payload.completed_at = new Date().toISOString();
-    const { error } = await sb.from("appointments").update(payload).eq("id", appt.id);
+    const { data: upd, error } = await sb.from("appointments").update(payload).eq("id", appt.id).select("status");
     if (error) return toast(error.message, "error");
-    closeModal(); toast("Appointment updated.", "success"); onSaved && onSaved();
+    closeModal(); if (!approvalNotice(payload.status, upd)) toast("Appointment updated.", "success"); onSaved && onSaved();
   });
 }
 
@@ -1976,9 +2294,10 @@ async function renderDoctorsTab(body) {
   document.getElementById("addDoctorBtn").addEventListener("click", () => openDoctorForm(null, load));
 }
 
-function openDoctorForm(doc, onSaved) {
+async function openDoctorForm(doc, onSaved) {
   const isEdit = !!doc;
-  const days = (doc && doc.available_days) || ["Mon","Tue","Wed","Thu","Fri","Sat"];
+  const { data: ttRows } = isEdit ? await sb.from("doctor_schedule").select("*").eq("doctor_id", doc.id) : { data: null };
+  const ttDefault = WEEKDAYS.filter(w => w[1] >= 1 && w[1] <= 6).map(([, wd]) => ({ weekday: wd, session: "morning", start_time: wd === 6 ? "10:30" : "09:30", end_time: wd === 6 ? "12:30" : "13:00", approval_required: false }));
   openModal(isEdit ? "Edit Doctor" : "Add Doctor", `
     <form id="doctorForm">
       <div class="field mb-8"><label>Name *</label><input name="name" required value="${escapeHtml(doc?.name||'')}"></div>
@@ -1988,19 +2307,7 @@ function openDoctorForm(doc, onSaved) {
         <div class="field"><label>Consultation Fee (₹)</label><input name="fee" type="number" step="0.01" value="${doc?.fee ?? ''}"></div>
         <div class="field"><label>Slot Duration (minutes) *</label><input name="slot_duration_minutes" type="number" required value="${doc?.slot_duration_minutes ?? 45}"></div>
       </div>
-      <div class="field mb-8"><label>Available Days *</label>
-        <div class="flex gap-8" style="flex-wrap:wrap">
-          ${DAY_KEYS.map(dk => `<label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" name="day_${dk}" ${days.includes(dk)?'checked':''}> ${dk}</label>`).join("")}
-        </div>
-      </div>
-      <div class="form-row mb-8">
-        <div class="field"><label>Mon–Fri Start *</label><input name="start_time" type="time" required value="${(doc?.start_time||'09:30').slice(0,5)}"></div>
-        <div class="field"><label>Mon–Fri End *</label><input name="end_time" type="time" required value="${(doc?.end_time||'13:00').slice(0,5)}"></div>
-      </div>
-      <div class="form-row mb-8">
-        <div class="field"><label>Saturday Start</label><input name="saturday_start_time" type="time" value="${(doc?.saturday_start_time||'10:30').slice(0,5)}"></div>
-        <div class="field"><label>Saturday End</label><input name="saturday_end_time" type="time" value="${(doc?.saturday_end_time||'12:30').slice(0,5)}"></div>
-      </div>
+      ${timetableGridHtml(isEdit ? ttRows : ttDefault)}
       <div class="form-row mb-8">
         <div class="field"><label>Phone</label><input name="phone" value="${escapeHtml(doc?.phone||'')}"></div>
         <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(doc?.email||'')}"></div>
@@ -2008,26 +2315,28 @@ function openDoctorForm(doc, onSaved) {
       <div class="field mb-8"><label>Bio</label><textarea name="bio" rows="3">${escapeHtml(doc?.bio||'')}</textarea></div>
       <div class="field mb-8"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" name="show_on_website" ${doc?.show_on_website===false?'':'checked'} style="width:auto"> Show on website (name, qualification, specialty, bio and schedule only &mdash; never phone, email or fee)</label></div>
       <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button><button type="submit" class="btn btn-primary">${isEdit?'Save Changes':'Add Doctor'}</button></div>
-    </form>`);
+    </form>`, { wide: true });
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("doctorForm").addEventListener("submit", async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const tt = readTimetable(fd);
+    if (tt.errors.length) return toast(tt.errors.join("; "), "error");
     const payload = {
       name: fd.get("name"), qualification: fd.get("qualification"), department: fd.get("department"),
       fee: fd.get("fee") ? Number(fd.get("fee")) : null,
       slot_duration_minutes: Number(fd.get("slot_duration_minutes")),
-      available_days: DAY_KEYS.filter(dk => fd.get("day_"+dk)),
-      start_time: fd.get("start_time"), end_time: fd.get("end_time"),
-      saturday_start_time: fd.get("saturday_start_time") || null, saturday_end_time: fd.get("saturday_end_time") || null,
       phone: fd.get("phone") ? normalizePhone(fd.get("phone")) : null, email: fd.get("email") || null, bio: fd.get("bio") || null,
       show_on_website: !!fd.get("show_on_website"),
     };
-    const { error } = isEdit
-      ? await sb.from("doctors").update(payload).eq("id", doc.id)
-      : await sb.from("doctors").insert({ ...payload, is_active: true });
+    const { data: saved, error } = isEdit
+      ? await sb.from("doctors").update(payload).eq("id", doc.id).select("id")
+      : await sb.from("doctors").insert({ ...payload, is_active: true }).select("id");
     if (error) return toast(error.message, "error");
-    closeModal(); toast(isEdit ? "Doctor updated." : "Doctor added.", "success"); onSaved && onSaved();
+    const ttErr = await saveTimetable(saved[0].id, tt.rows);   // also refreshes the website hours (database trigger)
+    if (ttErr) return toast("Doctor saved, but the timetable was not: " + ttErr.message, "error");
+    const ttText = WEEKDAYS.filter(([, wd]) => tt.rows.some(r => r.weekday === wd)).map(([lbl, wd]) => lbl + " " + tt.rows.filter(r => r.weekday === wd).map(r => r.start_time.slice(0,5) + "-" + r.end_time.slice(0,5) + (r.approval_required ? " (approval)" : "")).join(" + ")).join(", ");
+    closeModal(); toast((isEdit ? "Saved. " : "Doctor added. ") + "Open slots: " + (ttText || "none") + ". Any other time needs approval.", "success"); onSaved && onSaved();
   });
 }
 
@@ -2074,6 +2383,194 @@ async function renderServicesTab(body) {
       if (error) return toast(error.message, "error");
       closeModal(); toast("Service added.", "success"); load();
     });
+  });
+}
+
+/* ======================================================================
+   STAGE E: weekly timetable, approval notices, suspected duplicates, patient merge
+   (database rules do the enforcing: appointments_approval_guard, merge_patients)
+   ====================================================================== */
+const WEEKDAYS = [["Mon",1],["Tue",2],["Wed",3],["Thu",4],["Fri",5],["Sat",6],["Sun",0]];
+const SESSION_DEFAULTS = { morning: ["09:30","13:00"], evening: ["17:00","20:00"] };
+
+function timetableGridHtml(rows) {
+  const get = (wd, s) => (rows || []).find(r => r.weekday === wd && r.session === s);
+  const cell = (wd, s) => {
+    const r = get(wd, s), d = SESSION_DEFAULTS[s];
+    return `<td><label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" style="width:auto" name="tt_on_${wd}_${s}" ${r?'checked':''}> open</label></td>
+      <td><input type="time" name="tt_start_${wd}_${s}" value="${(r?.start_time||d[0]).slice(0,5)}" style="min-width:0;width:100%;padding:6px"></td>
+      <td><input type="time" name="tt_end_${wd}_${s}" value="${(r?.end_time||d[1]).slice(0,5)}" style="min-width:0;width:100%;padding:6px"></td>
+      <td><label style="font-size:12px;display:flex;align-items:center;gap:4px" title="Bookings in this slot need the doctor's approval"><input type="checkbox" style="width:auto" name="tt_appr_${wd}_${s}" ${r ? (r.approval_required?'checked':'') : (s==='evening'?'checked':'')}> approval</label></td>`;
+  };
+  return `<div class="field mb-8"><label>Weekly timetable *</label>
+    <div class="field-hint mb-8">Bookings inside an open slot are confirmed directly. Any other time, or a slot marked "approval", goes to the doctor for approval (WhatsApp, website and front office alike). Doctor and admin entries are always approved.</div>
+    <div style="overflow-x:auto"><table class="tt-grid" style="width:100%;table-layout:fixed;font-size:12px"><thead><tr><th>Day</th><th colspan="4">Morning</th><th colspan="4">Evening</th></tr></thead><tbody>
+    ${WEEKDAYS.map(([lbl, wd]) => `<tr><td><b>${lbl}</b></td>${cell(wd,'morning')}${cell(wd,'evening')}</tr>`).join("")}
+    </tbody></table></div></div>`;
+}
+
+function readTimetable(fd) {
+  const rows = [], errors = [];
+  for (const [lbl, wd] of WEEKDAYS) for (const s of ["morning","evening"]) {
+    if (!fd.get(`tt_on_${wd}_${s}`)) continue;
+    const start = fd.get(`tt_start_${wd}_${s}`), end = fd.get(`tt_end_${wd}_${s}`);
+    if (!start || !end || end <= start) { errors.push(`${lbl} ${s}: end must be after start`); continue; }
+    rows.push({ weekday: wd, session: s, start_time: start, end_time: end, approval_required: !!fd.get(`tt_appr_${wd}_${s}`) });
+  }
+  const m = rows.filter(r => r.session === "morning"), e = rows.filter(r => r.session === "evening");
+  for (const ev of e) { const mo = m.find(x => x.weekday === ev.weekday); if (mo && ev.start_time < mo.end_time) errors.push(`${WEEKDAYS.find(w=>w[1]===ev.weekday)[0]}: evening starts before morning ends`); }
+  if (!rows.length) errors.push("Open at least one slot");
+  return { rows, errors };
+}
+
+// replace the doctor's timetable with exactly these rows (delete what is no longer open)
+async function saveTimetable(doctorId, rows) {
+  const keep = new Set(rows.map(r => r.weekday + "_" + r.session));
+  const { data: existing, error: e1 } = await sb.from("doctor_schedule").select("id,weekday,session").eq("doctor_id", doctorId);
+  if (e1) return e1;
+  const gone = (existing || []).filter(x => !keep.has(x.weekday + "_" + x.session)).map(x => x.id);
+  if (gone.length) { const { error } = await sb.from("doctor_schedule").delete().in("id", gone); if (error) return error; }
+  if (rows.length) {
+    const { error } = await sb.from("doctor_schedule").upsert(rows.map(r => ({ ...r, doctor_id: doctorId, updated_at: new Date().toISOString() })), { onConflict: "doctor_id,weekday,session" });
+    if (error) return error;
+  }
+  return null;
+}
+
+// after a booking write: the database may have turned "confirmed" into "pending_doctor_approval"
+function approvalNotice(requestedStatus, rows) {
+  const got = rows && rows[0] && rows[0].status;
+  if (requestedStatus === "confirmed" && got === "pending_doctor_approval") {
+    toast("Outside the open timetable: sent to the doctor for approval (status: pending approval).", "info");
+    return true;
+  }
+  return false;
+}
+
+/* ---------- suspected duplicates ---------- */
+let duplicatesOpen = 0;
+function updateDuplicatesBadge() {
+  const el = document.querySelector('[data-nav="duplicates"]');
+  if (!el) return;
+  let b = el.querySelector(".nav-badge");
+  if (!duplicatesOpen) { if (b) b.remove(); return; }
+  if (!b) { b = document.createElement("span"); b.className = "nav-badge"; el.appendChild(b); }
+  b.textContent = duplicatesOpen;
+}
+async function refreshDuplicatesCount() {
+  if (!state.staff || !["admin","doctor","reception","front_office"].includes(state.staff.role)) return;
+  const { count } = await sb.from("duplicate_suspects").select("id", { count: "exact", head: true }).eq("status", "open");
+  duplicatesOpen = count || 0; updateDuplicatesBadge();
+}
+
+VIEWS.duplicates = async function(content) {
+  const canAct = can("admin", "front_office");
+  content.innerHTML = `<div class="panel"><div class="panel-head"><div class="panel-title">Suspected duplicate patients</div></div>
+    <div class="field-hint mb-8">Same phone number and one name contained in the other (e.g. "Himanshu" and "Himanshu Nagpal"). Bookings were not blocked. Merge them, or mark "Not a duplicate" so the pair is never flagged again.</div>
+    <div id="dupList" class="empty-state">Loading…</div></div>`;
+  const { data, error } = await sb.from("duplicate_suspects")
+    .select("id,reason,created_at,a:patients!duplicate_suspects_patient_a_fkey(id,name,phone,dob,gender,email,created_at),b:patients!duplicate_suspects_patient_b_fkey(id,name,phone,dob,gender,email,created_at)")
+    .eq("status", "open").order("created_at", { ascending: false });
+  const list = document.getElementById("dupList");
+  if (error) { list.textContent = "Error: " + error.message; return; }
+  duplicatesOpen = (data || []).length; updateDuplicatesBadge();
+  if (!data || !data.length) { list.textContent = "No suspected duplicates. 🎉"; return; }
+  const card = p => `<div style="flex:1;min-width:220px;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:10px">
+      <div><b>${escapeHtml(p.name)}</b> <span class="muted">#${p.id}</span></div>
+      <div class="muted" style="font-size:12px">${escapeHtml(p.phone||'')} · DOB ${escapeHtml(p.dob||'—')} · ${escapeHtml(p.gender||'—')}</div>
+      <div class="muted" style="font-size:12px">${escapeHtml(p.email||'')} · added ${fmtDateOnly(p.created_at)}</div>
+      <button class="btn btn-secondary btn-sm" style="margin-top:8px" data-open-patient="${p.id}">Open</button></div>`;
+  list.className = "";
+  list.innerHTML = data.map(d => `<div class="mb-16" style="border-bottom:1px solid var(--border);padding-bottom:12px">
+      <div class="flex gap-8" style="flex-wrap:wrap">${card(d.a)}${card(d.b)}</div>
+      ${canAct ? `<div class="flex gap-8" style="margin-top:8px"><button class="btn btn-primary btn-sm" data-merge="${d.id}">Merge…</button><button class="btn btn-secondary btn-sm" data-notdup="${d.id}">Not a duplicate</button></div>` : `<div class="muted" style="font-size:12px;margin-top:8px">Admin or front office can merge.</div>`}
+    </div>`).join("");
+  list.querySelectorAll("[data-open-patient]").forEach(b => b.addEventListener("click", () => navigate("patientProfile", { id: Number(b.dataset.openPatient) })));
+  list.querySelectorAll("[data-notdup]").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Mark these two as different people? They won't be flagged again.")) return;
+    const { error } = await sb.rpc("mark_not_duplicate", { p_suspect_id: Number(b.dataset.notdup) });
+    if (error) return toast(error.message, "error");
+    toast("Marked as not a duplicate.", "success"); VIEWS.duplicates(content);
+  }));
+  list.querySelectorAll("[data-merge]").forEach(b => b.addEventListener("click", () => {
+    const d = data.find(x => String(x.id) === b.dataset.merge);
+    openMergeDialog([d.a, d.b], () => VIEWS.duplicates(content));
+  }));
+};
+
+/* ---------- merge dialog (2 or more patients) ---------- */
+const MERGE_FIELDS = [["name","Name"],["dob","Date of birth"],["gender","Gender"],["address","Address"],["email","Email"],["emergency_contact_name","Emergency contact"],["emergency_contact_phone","Emergency phone"],["notes","Notes"]];
+
+async function openMergeDialog(patients, onDone) {
+  const ids = patients.map(p => p.id);
+  const { data: full, error } = await sb.from("patients").select("*").in("id", ids);
+  if (error) return toast(error.message, "error");
+  const recs = ids.map(id => full.find(p => p.id === id)).filter(Boolean);
+  const oldest = [...recs].sort((x, y) => x.id - y.id)[0];
+  const opt = (field, p, checked) => `<label style="font-size:12px;display:block"><input type="radio" style="width:auto" name="f_${field}" value="${p.id}" ${checked?'checked':''}> ${escapeHtml(p[field] ?? '') || '<span class="muted">(empty)</span>'} <span class="muted">#${p.id}</span></label>`;
+  openModal("Merge patients", `
+    <form id="mergeForm">
+      <div class="field mb-8"><label>Keep this record (its id, history and phone stay)</label>
+        ${recs.map(p => `<label style="font-size:13px;display:block"><input type="radio" style="width:auto" name="keep" value="${p.id}" ${p.id===oldest.id?'checked':''}> ${escapeHtml(p.name)} <span class="muted">#${p.id} · ${escapeHtml(p.phone||'')}</span></label>`).join("")}
+      </div>
+      <div class="field mb-8"><label>Details to keep</label>
+        <table><tbody>${MERGE_FIELDS.map(([f, lbl]) => {
+          const firstWithValue = recs.find(p => p.id === oldest.id && p[f]) || recs.find(p => p[f]) || oldest;
+          return `<tr><td style="width:130px"><b>${lbl}</b></td><td>${recs.map(p => opt(f, p, p.id === firstWithValue.id)).join("")}</td></tr>`;
+        }).join("")}</tbody></table>
+      </div>
+      <div id="mergePreview" class="field-hint mb-8">Click "Preview" to see what will move.</div>
+      <div class="modal-actions"><button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+        <button type="button" class="btn btn-secondary" id="previewBtn">Preview</button>
+        <button type="submit" class="btn btn-danger" id="mergeBtn" disabled>Merge</button></div>
+    </form>`, { wide: true });
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  const form = document.getElementById("mergeForm");
+  const pick = () => {
+    const fd = new FormData(form); const keep = Number(fd.get("keep"));
+    const fields = {};
+    for (const [f] of MERGE_FIELDS) {
+      const src = recs.find(p => String(p.id) === fd.get("f_" + f));
+      const keepRec = recs.find(p => p.id === keep);
+      if (src && src.id !== keep && (src[f] ?? null) !== (keepRec[f] ?? null)) fields[f] = src[f] ?? "";
+    }
+    return { keep, merge: ids.filter(i => i !== keep), fields };
+  };
+  form.addEventListener("change", () => { document.getElementById("mergeBtn").disabled = true; document.getElementById("mergePreview").textContent = 'Click "Preview" to see what will move.'; });
+  document.getElementById("previewBtn").addEventListener("click", async () => {
+    const { keep, merge, fields } = pick();
+    const { data, error } = await sb.rpc("merge_preview", { p_keep: keep, p_merge: merge });
+    if (error) return toast(error.message.includes("NOT_ALLOWED") ? "Only admin can merge patients that are not flagged duplicates." : error.message, "error");
+    const moves = Object.entries(data || {}).map(([t, n]) => `${n} ${t.replace(/_/g, " ")}`).join(", ") || "no linked records";
+    const changes = Object.keys(fields).map(f => MERGE_FIELDS.find(x => x[0] === f)[1]).join(", ") || "none";
+    document.getElementById("mergePreview").innerHTML = `<b>Will move to #${keep}:</b> ${escapeHtml(moves)}.<br><b>Details changed on #${keep}:</b> ${escapeHtml(changes)}.<br>#${merge.join(", #")} will be archived (not deleted) with a full snapshot in the audit trail.`;
+    document.getElementById("mergeBtn").disabled = false;
+  });
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    const { keep, merge, fields } = pick();
+    if (!confirm(`Merge #${merge.join(", #")} into #${keep}? This moves all their records.`)) return;
+    const { error } = await sb.rpc("merge_patients", { p_keep: keep, p_merge: merge, p_fields: fields });
+    if (error) return toast(error.message, "error");
+    closeModal(); toast("Patients merged.", "success"); refreshDuplicatesCount(); onDone && onDone();
+  });
+}
+
+// admin: merge any patients (e.g. different phone numbers) from a patient's page
+async function openManualMerge(patientId) {
+  const { data } = await sb.from("patients").select("id,name,phone").is("deleted_at", null).neq("id", patientId).order("name");
+  openModal("Merge with another patient", `
+    <div class="field mb-8"><label>Find the duplicate record(s) of patient #${patientId}</label>
+      <input id="mmSearch" placeholder="Type a name or phone"><select id="mmPick" multiple size="8" style="width:100%;margin-top:6px"></select></div>
+    <div class="modal-actions"><button class="btn btn-secondary" id="cancelBtn">Cancel</button><button class="btn btn-primary" id="mmNext">Next</button></div>`);
+  const pick = document.getElementById("mmPick");
+  const fill = t => { t = (t || "").toLowerCase(); pick.innerHTML = (data || []).filter(p => !t || (p.name || "").toLowerCase().includes(t) || (p.phone || "").includes(t)).slice(0, 200).map(p => `<option value="${p.id}">${escapeHtml(p.name)} — ${escapeHtml(p.phone || "")} (#${p.id})</option>`).join(""); };
+  fill(""); document.getElementById("mmSearch").addEventListener("input", e => fill(e.target.value));
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  document.getElementById("mmNext").addEventListener("click", () => {
+    const chosen = [...pick.selectedOptions].map(o => ({ id: Number(o.value) }));
+    if (!chosen.length) return toast("Pick at least one record.", "error");
+    openMergeDialog([{ id: patientId }, ...chosen], () => navigate("patientProfile", { id: patientId }));
   });
 }
 
@@ -2871,8 +3368,8 @@ VIEWS.staff = async function(content) {
   content.innerHTML = `
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Team Members</div><button class="btn btn-primary btn-sm" id="addStaffBtn">+ Add Staff</button></div>
-      <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>2FA</th><th></th></tr></thead>
-      <tbody id="staffTbody"><tr><td colspan="6" class="empty-state">Loading…</td></tr></tbody></table>
+      <table><thead><tr><th>Name</th><th>Email</th><th>WhatsApp</th><th>Role</th><th>Status</th><th>2FA</th><th></th></tr></thead>
+      <tbody id="staffTbody"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody></table>
     </div>`;
   async function load() {
     const { data, error } = await sb.from("staff").select("*").order("created_at");
@@ -2882,6 +3379,7 @@ VIEWS.staff = async function(content) {
       <tr>
         <td>${escapeHtml(s.name)}</td>
         <td>${escapeHtml(s.email)}</td>
+        <td style="white-space:nowrap">${escapeHtml(s.phone || "—")} <button class="btn btn-secondary btn-sm" data-phone-edit="${s.id}" data-current="${escapeHtml(s.phone||'')}" title="WhatsApp number for 2FA codes and approval alerts">✎</button></td>
         <td>
           <select data-role="${s.id}" ${s.id===state.staff.id?'disabled':''}>
             ${STAFF_ROLES.map(r=>`<option value="${r}" ${s.role===r?'selected':''}>${ROLE_LABELS[r]}</option>`).join("")}
@@ -2915,6 +3413,15 @@ VIEWS.staff = async function(content) {
     }));
     // Works for the admin's own row too, on purpose - an admin must be able
     // to turn WhatsApp OTP 2FA on for their own login, not just for others.
+    tbody.querySelectorAll("[data-phone-edit]").forEach(btn => btn.addEventListener("click", async () => {
+      const entered = prompt("WhatsApp number (10 digits, optional country code). Leave empty to remove:", btn.dataset.current || "");
+      if (entered === null) return;
+      const value = entered.trim() ? normalizePhone(entered.trim()) : "";
+      if (value && !isValidPhone(value)) return toast(PHONE_FORMAT_MSG, "error");
+      const { error } = await sb.rpc("set_staff_phone", { p_id: btn.dataset.phoneEdit, p_phone: value });
+      if (error) return toast(error.message, "error");
+      toast(value ? "WhatsApp number saved." : "WhatsApp number removed.", "success"); load();
+    }));
     tbody.querySelectorAll("[data-twofa]").forEach(cb => cb.addEventListener("change", async () => {
       const id = cb.dataset.twofa;
       if (cb.checked) {
